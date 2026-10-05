@@ -1,0 +1,28 @@
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (MSVC x64)
+        shell: cmd
+        run: build.bat
+
+      - name: Smoke test
+        shell: pwsh
+        run: .\primes.exe -q 1000000
+
+      - name: Create release and attach EXE
+        uses: softprops/action-gh-release@v2
+        with:
+          files: primes.exe
+          generate_release_notes: true

@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (MSVC x64)
+        shell: cmd
+        run: build.bat
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          .\primes.exe -q 1000000
+          .\primes.exe -m miller -q 1000000
+          .\primes.exe -c 100 | Select-Object -Last 1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: primes-exe
+          path: primes.exe
