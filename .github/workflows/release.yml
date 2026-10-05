@@ -12,6 +12,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Build (MSVC x64)
         shell: cmd
@@ -21,25 +23,45 @@ jobs:
         shell: pwsh
         run: .\primes.exe -q 1000000
 
-      - name: Changelog-Eintrag extrahieren
+      - name: Release-Notes aus changelog.md (inkl. nicht gepushter Hotfixes)
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $ver = "${{ github.ref_name }}".TrimStart('v')
-          $lines = Get-Content -LiteralPath changelog.md
-          $start = -1
-          for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match ("^##\s*\[" + [regex]::Escape($ver) + "\]")) { $start = $i; break }
+          $repo = "${{ github.repository }}"
+          $cur  = "${{ github.ref_name }}".TrimStart('v')
+
+          # Vorheriges Release (letzter Tag mit Release) ermitteln
+          $prev = ""
+          $prevJson = (gh api "repos/$repo/releases/latest" 2>$null) | Out-String
+          if ($LASTEXITCODE -eq 0 -and $prevJson.Trim()) {
+            $prev = (ConvertFrom-Json $prevJson).tag_name
+            if ($prev) { $prev = $prev.TrimStart('v') }
           }
-          $body = @()
-          if ($start -ge 0) {
-            for ($i = $start; $i -lt $lines.Count; $i++) {
-              if ($i -gt $start -and $lines[$i] -match '^##\s*\[') { break }
-              $body += $lines[$i]
+          if ($prev -eq $cur) { $prev = "" }   # Re-Run fuer denselben Tag
+
+          # Alle Sektionen von oben bis (ausschliesslich) zum vorherigen Release
+          $lines = Get-Content -LiteralPath changelog.md -Encoding UTF8
+          $body  = New-Object System.Collections.Generic.List[string]
+          $inSection = $false
+          $sections  = 0
+          foreach ($line in $lines) {
+            if ($line -match '^##\s*\[([0-9][^\]]*)\]') {
+              $ver = $Matches[1]
+              if ($prev) {
+                if ($ver -eq $prev) { break }
+              } else {
+                $sections++
+                if ($sections -gt 1) { break }   # erstes Release: nur aktueller Eintrag
+              }
+              $inSection = $true
             }
-          } else {
-            $body = @("Release $ver")
+            if ($inSection) { $body.Add($line) }
           }
-          ($body -join "`n") | Out-File -LiteralPath release_notes.md -Encoding utf8
+          if ($body.Count -eq 0) { $body.Add("Release $cur") }
+
+          $text = ($body -join "`n").Trim()
+          [IO.File]::WriteAllText((Join-Path $PWD 'release_notes.md'), $text, (New-Object System.Text.UTF8Encoding($false)))
           "---- release_notes.md ----"
           Get-Content -LiteralPath release_notes.md
 
