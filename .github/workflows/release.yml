@@ -21,8 +21,31 @@ jobs:
         shell: pwsh
         run: .\primes.exe -q 1000000
 
+      - name: Changelog-Eintrag extrahieren
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $lines = Get-Content -LiteralPath changelog.md
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match ("^##\s*\[" + [regex]::Escape($ver) + "\]")) { $start = $i; break }
+          }
+          $body = @()
+          if ($start -ge 0) {
+            for ($i = $start; $i -lt $lines.Count; $i++) {
+              if ($i -gt $start -and $lines[$i] -match '^##\s*\[') { break }
+              $body += $lines[$i]
+            }
+          } else {
+            $body = @("Release $ver")
+          }
+          ($body -join "`n") | Out-File -LiteralPath release_notes.md -Encoding utf8
+          "---- release_notes.md ----"
+          Get-Content -LiteralPath release_notes.md
+
       - name: Create release and attach EXE
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
           files: primes.exe
-          generate_release_notes: true
