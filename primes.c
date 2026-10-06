@@ -52,7 +52,7 @@
 typedef uint64_t u64;
 typedef uint8_t  u8;
 
-#define PRIMES_VERSION "3.0.0"
+#define PRIMES_VERSION "3.1.0"
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
@@ -802,6 +802,9 @@ typedef struct {
     StreamCtx    **streams;
     int            n;
     int            enabled;
+    int            draw;            /* draw the status line                 */
+    int            have_title;      /* console title was saved              */
+    char           orig_title[512];
     double         start_ms;
     double         last_expected;   /* ms, 0 = no extrapolation yet */
     int            last_color;
@@ -843,6 +846,7 @@ static unsigned __stdcall monitor_main(void *p)
     int n = m->n;
     int w = 1; for (int t = n; t >= 10; t /= 10) w++;
     int frame = 0;                    /* rotating separator | / - \ */
+    int tick = 0;                     /* monitor ticks (10 = 1 second) */
 
     u64 *prev_cpu = (u64 *)calloc((size_t)n, sizeof(u64));
     if (!prev_cpu) return 0;
@@ -858,6 +862,7 @@ static unsigned __stdcall monitor_main(void *p)
 
         char line[8192];
         int off = snprintf(line, sizeof line, "CPU/Thread:");
+        double pct_sum = 0.0;
         for (int i = 0; i < n && off < (int)sizeof line - 64; i++) {
             u64 c = thread_cpu_100ns(m->handles[i]);
             u64 dc = c - prev_cpu[i];
@@ -865,6 +870,7 @@ static unsigned __stdcall monitor_main(void *p)
             double pct = 100.0 * ((double)dc / 10000.0) / dw;
             if (pct > 100.0) pct = 100.0;
             if (pct < 0.0) pct = 0.0;
+            pct_sum += pct;
             int col = m->colors ? m->colors[i] : COL_WHITE;
             off += snprintf(line + off, sizeof line - off,
                             " \x1b[38;5;%dmT%0*d=%3.0f%%\x1b[0m",
@@ -947,14 +953,25 @@ static unsigned __stdcall monitor_main(void *p)
                             pstr, estr, eunit, m->last_color, tstr, tunit);
         }
 
-        if (off > (int)sizeof line - 1) off = (int)sizeof line - 1;
-        EnterCriticalSection(&g_status_cs);
-        out_flush(0);                 /* output buffered primes */
-        memcpy(g_status_line, line, (size_t)off);
-        g_status_line[off] = '\0';
-        g_status_len = off;
-        status_render(line, off);
-        LeaveCriticalSection(&g_status_cs);
+        /* Console window title: average CPU over all threads, once per second. */
+        tick++;
+        if (m->have_title && (tick % 10 == 0)) {
+            double avg = n > 0 ? pct_sum / (double)n : 0.0;
+            char tbuf[128];
+            snprintf(tbuf, sizeof tbuf, "gprimes64.exe - CPU %.0f%%", avg);
+            SetConsoleTitleA(tbuf);
+        }
+
+        if (m->draw) {
+            if (off > (int)sizeof line - 1) off = (int)sizeof line - 1;
+            EnterCriticalSection(&g_status_cs);
+            out_flush(0);             /* output buffered primes */
+            memcpy(g_status_line, line, (size_t)off);
+            g_status_line[off] = '\0';
+            g_status_len = off;
+            status_render(line, off);
+            LeaveCriticalSection(&g_status_cs);
+        }
         prev_wall = now;
     }
 
@@ -965,7 +982,7 @@ static unsigned __stdcall monitor_main(void *p)
 typedef struct { Monitor mon; HANDLE thread; } MonitorHandle;
 
 static void monitor_start(MonitorHandle *mh, HANDLE *handles, const u8 *colors,
-                          StreamCtx **streams, int n, int want)
+                          StreamCtx **streams, int n, int live, int title)
 {
     memset(&mh->mon, 0, sizeof mh->mon);
     mh->thread = NULL;
@@ -976,7 +993,14 @@ static void monitor_start(MonitorHandle *mh, HANDLE *handles, const u8 *colors,
     mh->mon.start_ms = qpc_ms();
     mh->mon.last_color = COL_WHITE;
     mh->mon.next_pct = 10.0;
-    mh->mon.enabled = want && n > 0 && (handle_is_console(STD_ERROR_HANDLE) || progress_forced());
+    int stderrcon = handle_is_console(STD_ERROR_HANDLE);
+    int hascon = GetConsoleWindow() != NULL;
+    mh->mon.draw = live && (stderrcon || progress_forced());
+    mh->mon.enabled = n > 0 && (mh->mon.draw || (title && hascon));
+    if (mh->mon.enabled && title && hascon) {
+        if (GetConsoleTitleA(mh->mon.orig_title, (DWORD)sizeof mh->mon.orig_title) > 0)
+            mh->mon.have_title = 1;
+    }
     if (mh->mon.enabled)
         mh->thread = (HANDLE)_beginthreadex(NULL, 0, monitor_main, &mh->mon, 0, NULL);
 }
@@ -989,6 +1013,8 @@ static void monitor_stop(MonitorHandle *mh)
         CloseHandle(mh->thread);
         mh->thread = NULL;
     }
+    if (mh->mon.have_title)
+        SetConsoleTitleA(mh->mon.orig_title);
 }
 
 /* ==================================================================
@@ -1031,7 +1057,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
         StreamCtx *streams1[1];
         streams1[0] = out;
         MonitorHandle mh;
-        monitor_start(&mh, handles, &color, streams1, n, live);
+        monitor_start(&mh, handles, &color, streams1, n, live, 1);
 
         /* Preserve the status line only when writing concurrently to the same
          * console (stdout). Then reserve the bottom line. */
@@ -1087,7 +1113,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
     HANDLE *hhandles = (HANDLE *)calloc((size_t)(nargs ? nargs : 1), sizeof(HANDLE));
     for (int t = 0; t < nargs; t++) hhandles[t] = (HANDLE)hs[t];
     MonitorHandle mh;
-    monitor_start(&mh, hhandles, colors, streams, nargs, live);
+    monitor_start(&mh, hhandles, colors, streams, nargs, live, 1);
 
     for (int t = 0; t < nargs; t++)
         WaitForSingleObject((HANDLE)hs[t], INFINITE);
@@ -1168,10 +1194,12 @@ static void print_help(FILE *out)
         "about 10%% progress: percent / elapsed time / extrapolated total\n"
         "duration (red = longer, green = shorter than before).\n"
         "\n"
-        "Number range: 0 to 18446744073709551615 (2^64-1).\n"
+        "Number range: 0 to 340282366920938463463374607431768211455 (2^128-1).\n"
+        "Values beyond 64-bit are handled with 128-bit arithmetic; there only\n"
+        "-m miller is available (probabilistic).\n"
         "For very large numbers or small ranges near large values, -m miller\n"
-        "or -m trial are much better suited than the sieve (the sieve builds\n"
-        "base primes up to sqrt(N) and needs a lot of memory).\n"
+        "is much better suited than the sieve (the sieve builds base primes\n"
+        "up to sqrt(N) and needs a lot of memory).\n"
         "\n"
         "Examples:\n"
         "  gprimes64 -t 100\n"
@@ -1244,6 +1272,264 @@ static void check_sieve_feasible(u64 high, int threads)
 }
 
 /* ==================================================================
+ *  128-bit support (for inputs beyond 64-bit)
+ * ================================================================== */
+typedef struct { u64 lo, hi; } u128;
+
+static u128 u128_from_u64(u64 v) { u128 r; r.lo = v; r.hi = 0; return r; }
+static int  u128_is_zero(u128 a) { return a.lo == 0 && a.hi == 0; }
+static int  u128_is_even(u128 a) { return (a.lo & 1) == 0; }
+static int  u128_eq(u128 a, u128 b) { return a.lo == b.lo && a.hi == b.hi; }
+static int  u128_cmp(u128 a, u128 b) {
+    if (a.hi != b.hi) return a.hi < b.hi ? -1 : 1;
+    if (a.lo != b.lo) return a.lo < b.lo ? -1 : 1;
+    return 0;
+}
+static u128 u128_add(u128 a, u128 b) {
+    u128 r; r.lo = a.lo + b.lo; r.hi = a.hi + b.hi + (r.lo < a.lo); return r;
+}
+static u128 u128_sub(u128 a, u128 b) {
+    u128 r; r.lo = a.lo - b.lo; r.hi = a.hi - b.hi - (a.lo < b.lo); return r;
+}
+static void u128_add_u64(u128 *a, u64 d) {
+    u64 old = a->lo; a->lo += d; if (a->lo < old) a->hi++;
+}
+static u128 u128_shr1(u128 a) {
+    u128 r; r.lo = (a.lo >> 1) | (a.hi << 63); r.hi = a.hi >> 1; return r;
+}
+static u64 u128_bit(u128 a, int i) {
+    return (i >= 64) ? ((a.hi >> (i - 64)) & 1) : ((a.lo >> i) & 1);
+}
+/* Divide by a small divisor (<= 2^32); returns the remainder, v = quotient. */
+static u64 u128_divmod_small(u128 *v, u64 d) {
+    u128 q; q.lo = 0; q.hi = 0;
+    u64 rem = 0;
+    for (int i = 127; i >= 0; i--) {
+        rem = (rem << 1) | u128_bit(*v, i);
+        if (rem >= d) {
+            rem -= d;
+            if (i >= 64) q.hi |= ((u64)1 << (i - 64));
+            else         q.lo |= ((u64)1 << i);
+        }
+    }
+    *v = q;
+    return rem;
+}
+static void u128_to_dec(u128 v, char *buf, size_t n) {
+    char tmp[48]; int i = 0;
+    if (u128_is_zero(v)) tmp[i++] = '0';
+    else { u128 t = v; while (!u128_is_zero(t)) { u64 r = u128_divmod_small(&t, 10); tmp[i++] = (char)('0' + r); } }
+    if ((size_t)i >= n) i = (int)n - 1;
+    for (int j = 0; j < i; j++) buf[j] = tmp[i - 1 - j];
+    buf[i] = '\0';
+}
+
+/* Parse a decimal into u128. *fits64 is set if the value is <= 2^64-1. */
+static const char *U128_MAX_DEC = "340282366920938463463374607431768211455";
+static ParseStatus parse_u128(const char *s, u128 *out, int *fits64) {
+    if (!s || !*s) return P_EMPTY;
+    if (s[0] == '-') return P_INVALID;
+    const char *p = s;
+    while (*p == '0') p++;
+    size_t len = strlen(p);
+    if (len == 0) { *out = u128_from_u64(0); if (fits64) *fits64 = 1; return P_OK; }
+    if (len > 39) return P_RANGE;
+    if (len == 39 && strcmp(p, U128_MAX_DEC) > 0) return P_RANGE;
+    u128 v = u128_from_u64(0);
+    for (size_t i = 0; i < len; i++) {
+        if (p[i] < '0' || p[i] > '9') return P_INVALID;
+        u64 carry;
+        u64 lo10 = _umul128(v.lo, 10, &carry);
+        v.hi = v.hi * 10 + carry;
+        v.lo = lo10;
+        u128_add_u64(&v, (u64)(p[i] - '0'));
+    }
+    *out = v;
+    if (fits64) *fits64 = (v.hi == 0);
+    return P_OK;
+}
+
+/* --- 128-bit primality (Miller-Rabin, probabilistic beyond 64-bit) --- */
+static u128 u128_addmod(u128 a, u128 b, u128 m) {
+    u128 s = u128_add(a, b);
+    if (u128_cmp(s, m) >= 0) s = u128_sub(s, m);
+    return s;
+}
+static u128 u128_mulmod(u128 a, u128 b, u128 m) {
+    u128 r = u128_from_u64(0);
+    while (!u128_is_zero(b)) {
+        if (b.lo & 1) r = u128_addmod(r, a, m);
+        a = u128_addmod(a, a, m);
+        b = u128_shr1(b);
+    }
+    return r;
+}
+static u128 u128_powmod(u128 a, u128 e, u128 m) {
+    u128 r = u128_from_u64(1);
+    while (!u128_is_zero(e)) {
+        if (e.lo & 1) r = u128_mulmod(r, a, m);
+        a = u128_mulmod(a, a, m);
+        e = u128_shr1(e);
+    }
+    return r;
+}
+static int is_prime128_mr(u128 n) {
+    if (n.hi == 0) return is_prime_mr(n.lo);   /* deterministic for 64-bit */
+    static const u64 bases[] = { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37 };
+    u128 one = u128_from_u64(1);
+    u128 nm1 = u128_sub(n, one);
+    u128 d = nm1; int s = 0;
+    while (u128_is_even(d)) { d = u128_shr1(d); s++; }
+    for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); i++) {
+        u128 a = u128_from_u64(bases[i]);
+        if (u128_cmp(a, n) >= 0) break;
+        u128 x = u128_powmod(a, d, n);
+        if (u128_eq(x, one) || u128_eq(x, nm1)) continue;
+        int witness = 1;
+        for (int r = 1; r < s; r++) {
+            x = u128_mulmod(x, x, n);
+            if (u128_eq(x, nm1)) { witness = 0; break; }
+        }
+        if (witness) return 0;
+    }
+    return 1;
+}
+
+/* Upper bound for the n-th prime in 128-bit (for n up to 2^64-1). */
+static u128 nth_prime_upper128(u64 n) {
+    double dn = (double)n;
+    double l = log(dn), ll = log(l);
+    double est = dn * (l + ll) * 1.10 + 100.0;
+    double two64 = 18446744073709551616.0;
+    u64 hi = (u64)(est / two64);
+    u64 lo = (u64)(est - (double)hi * two64);
+    u128 r; r.hi = hi; r.lo = lo;
+    return r;
+}
+
+/* --- output/table for 128-bit primes --- */
+typedef struct {
+    int    print;
+    int    table;
+    int    measure;
+    u64    stop_at;
+    u64    found;
+    u128  *bp;
+    double *bt;
+    u8    *bc;
+    size_t  len, cap;
+    StreamCtx prog;   /* progress only (read by the monitor) */
+} Ctx128;
+
+static void buf_push128(Ctx128 *c, u128 p, double ms) {
+    if (c->len == c->cap) {
+        size_t nc = c->cap ? c->cap * 2 : 4096;
+        u128   *np = (u128 *)realloc(c->bp, nc * sizeof(u128));
+        double *nt = c->measure ? (double *)realloc(c->bt, nc * sizeof(double)) : c->bt;
+        u8     *nb = c->table ? (u8 *)realloc(c->bc, nc * sizeof(u8)) : c->bc;
+        if (!np || (c->measure && !nt) || (c->table && !nb)) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
+        c->bp = np; c->bt = nt; c->bc = nb; c->cap = nc;
+    }
+    c->bp[c->len] = p;
+    if (c->measure) c->bt[c->len] = ms;
+    if (c->table)   c->bc[c->len] = COL_WHITE;
+    c->len++;
+}
+
+static void print_u128(u128 v) {
+    char buf[48]; u128_to_dec(v, buf, sizeof buf);
+    if (!g_status_coord) { fputs(buf, stdout); fputc('\n', stdout); return; }
+    EnterCriticalSection(&g_status_cs);
+    int n = snprintf(g_outbuf + g_outlen, sizeof(g_outbuf) - (size_t)g_outlen, "%s\n", buf);
+    if (n > 0) g_outlen += n;
+    if (g_outlen > (int)sizeof(g_outbuf) - 64) out_flush(1);
+    LeaveCriticalSection(&g_status_cs);
+}
+
+static void print_table128(const Ctx128 *c) {
+    const char *h1 = "Prime";
+    const char *h2 = "Compute time";
+    int w1 = (int)strlen(h1);
+    int w2 = (int)strlen(h2);
+    char b[64], p[48];
+    for (size_t i = 0; i < c->len; i++) {
+        u128_to_dec(c->bp[i], p, sizeof p);
+        int d = (int)strlen(p);
+        if (d > w1) w1 = d;
+        int n = snprintf(b, sizeof b, "%.3f ms", c->bt[i]);
+        if (n > w2) w2 = n;
+    }
+    print_rule(w1, w2);
+    printf("| %-*s | %-*s |\n", w1, h1, w2, h2);
+    print_rule(w1, w2);
+    for (size_t i = 0; i < c->len; i++) {
+        u128_to_dec(c->bp[i], p, sizeof p);
+        snprintf(b, sizeof b, "%.3f ms", c->bt[i]);
+        printf("| %*s | %*s |\n", w1, p, w2, b);
+    }
+    print_rule(w1, w2);
+    fflush(stdout);
+}
+
+static void method128_miller(u128 low, u128 high, Ctx128 *c) {
+    u128 width = u128_sub(high, low);
+    u64 span = (width.hi == 0) ? (width.lo / 2 + 1) : UINT64_MAX;
+    c->prog.prog_span = span;
+    c->prog.prog_done = 0;
+
+    if (u128_cmp(low, u128_from_u64(2)) <= 0 && u128_cmp(high, u128_from_u64(2)) >= 0) {
+        if (c->table) buf_push128(c, u128_from_u64(2), 0.0);
+        else if (c->print) print_u128(u128_from_u64(2));
+        c->found++;
+        if (c->stop_at && c->found >= c->stop_at) { c->prog.prog_done = span; return; }
+    }
+
+    u128 n = low;
+    if (u128_cmp(n, u128_from_u64(3)) < 0) n = u128_from_u64(3);
+    if (u128_is_even(n)) u128_add_u64(&n, 1);
+    u64 cnt = 0;
+    while (u128_cmp(n, high) <= 0) {
+        double t0 = c->measure ? qpc_ms() : 0.0;
+        int prime = is_prime128_mr(n);
+        if (prime) {
+            double dt = c->measure ? (qpc_ms() - t0) : 0.0;
+            if (c->table) buf_push128(c, n, dt);
+            else if (c->print) print_u128(n);
+            c->found++;
+            if (c->stop_at && c->found >= c->stop_at) { c->prog.prog_done = span; return; }
+        }
+        if (++cnt > span) cnt = span;
+        if ((cnt & 0x3FF) == 0) c->prog.prog_done = cnt;
+        if (n.hi == UINT64_MAX) break;      /* avoid wrap near 2^128 */
+        u128_add_u64(&n, 2);
+    }
+    c->prog.prog_done = span;
+}
+
+static void run128(u128 low, u128 high, Ctx128 *out, int live) {
+    HANDLE one = NULL, handles[1];
+    int n = 0;
+    if (live) {
+        one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+        if (one) { handles[0] = one; n = 1; }
+    }
+    u8 color = COL_WHITE;
+    StreamCtx *streams1[1];
+    streams1[0] = &out->prog;
+    MonitorHandle mh;
+    monitor_start(&mh, handles, &color, streams1, n, live, 1);
+    g_status_coord = mh.mon.draw && out->print && handle_is_console(STD_OUTPUT_HANDLE);
+    out->prog.prog_span = 0;
+    out->prog.prog_done = 0;
+    method128_miller(low, high, out);
+    g_status_coord = 0;
+    monitor_stop(&mh);
+    status_finish();
+    if (one) CloseHandle(one);
+    if (out->table) print_table128(out);
+}
+
+/* ==================================================================
  *  main
  * ================================================================== */
 enum { MODE_LIMIT, MODE_FIRST, MODE_RANGE };
@@ -1255,6 +1541,9 @@ int main(int argc, char **argv)
     int threads_opt = 1;
     const char *method_name = "sieve";
     u64 limit = 0, nfirst = 0, rangelow = 0, rangehigh = 0;
+    u128 limit128 = { 0, 0 }, nfirst128 = { 0, 0 };
+    u128 rangelow128 = { 0, 0 }, rangehigh128 = { 0, 0 };
+    int lim_fit = 1, cnt_fit = 1, rlo_fit = 1, rhi_fit = 1;
     int have_action = 0;
 
     InitializeCriticalSection(&g_status_cs);
@@ -1294,30 +1583,35 @@ int main(int argc, char **argv)
         }
         if (!strcmp(a, "-l") || !strcmp(a, "--limit")) {
             if (++i >= argc) { fprintf(stderr, "Error: -l/--limit expects a number.\n"); return 1; }
-            ParseStatus st = parse_u64(argv[i], &limit);
+            ParseStatus st = parse_u128(argv[i], &limit128, &lim_fit);
             if (st != P_OK) { report_number_error("limit (-l)", argv[i], st); return 1; }
+            limit = lim_fit ? limit128.lo : 0;
             mode = MODE_LIMIT; have_action = 1; continue;
         }
         if (!strcmp(a, "-c") || !strcmp(a, "--count")) {
             if (++i >= argc) { fprintf(stderr, "Error: -c/--count expects a number.\n"); return 1; }
-            ParseStatus st = parse_u64(argv[i], &nfirst);
+            ParseStatus st = parse_u128(argv[i], &nfirst128, &cnt_fit);
             if (st != P_OK) { report_number_error("count (-c)", argv[i], st); return 1; }
+            nfirst = cnt_fit ? nfirst128.lo : 0;
             mode = MODE_FIRST; have_action = 1; continue;
         }
         if (!strcmp(a, "-r") || !strcmp(a, "--range")) {
             if (i + 2 >= argc) { fprintf(stderr, "Error: -r/--range expects two numbers A B.\n"); return 1; }
-            ParseStatus sa = parse_u64(argv[i + 1], &rangelow);
+            ParseStatus sa = parse_u128(argv[i + 1], &rangelow128, &rlo_fit);
             if (sa != P_OK) { report_number_error("range bound A (-r)", argv[i + 1], sa); return 1; }
-            ParseStatus sb = parse_u64(argv[i + 2], &rangehigh);
+            ParseStatus sb = parse_u128(argv[i + 2], &rangehigh128, &rhi_fit);
             if (sb != P_OK) { report_number_error("range bound B (-r)", argv[i + 2], sb); return 1; }
+            rangelow  = rlo_fit ? rangelow128.lo : 0;
+            rangehigh = rhi_fit ? rangehigh128.lo : 0;
             i += 2; mode = MODE_RANGE; have_action = 1; continue;
         }
         if (a[0] == '-' && a[1] != '\0') {
             fprintf(stderr, "Unknown option: %s\n", a); print_help(stderr); return 1;
         }
         {
-            ParseStatus st = parse_u64(a, &limit);
+            ParseStatus st = parse_u128(a, &limit128, &lim_fit);
             if (st != P_OK) { report_number_error("limit", a, st); return 1; }
+            limit = lim_fit ? limit128.lo : 0;
         }
         mode = MODE_LIMIT; have_action = 1;
     }
@@ -1339,6 +1633,63 @@ int main(int argc, char **argv)
     }
 
     int threads = resolve_threads(threads_opt);
+
+    /* Decide whether 128-bit handling is required. */
+    int use128 = 0;
+    if (mode == MODE_LIMIT)      use128 = !lim_fit;
+    else if (mode == MODE_RANGE) use128 = !rlo_fit || !rhi_fit;
+    else {                       /* MODE_FIRST */
+        if (!cnt_fit) use128 = 1;
+        else if (nfirst >= 6 && nth_prime_upper(nfirst) == UINT64_MAX) use128 = 1;
+    }
+
+    if (use128) {
+        if (strcmp(method_name, "miller") != 0) {
+            fprintf(stderr,
+                "Error: method '%s' is not available for numbers beyond 64-bit; use -m miller.\n",
+                method_name);
+            return 1;
+        }
+        u128 lo128 = { 0, 0 }, hi128 = { 0, 0 };
+        u64 stop = 0;
+        if (mode == MODE_LIMIT) {
+            lo128 = u128_from_u64(0);
+            hi128 = limit128;
+        } else if (mode == MODE_RANGE) {
+            lo128 = rangelow128; hi128 = rangehigh128;
+            if (u128_cmp(lo128, hi128) > 0) { u128 t = lo128; lo128 = hi128; hi128 = t; }
+        } else {
+            if (!cnt_fit) {
+                fprintf(stderr, "Error: count beyond 64-bit is not supported (the resulting primes would exceed the 128-bit range).\n");
+                return 1;
+            }
+            lo128 = u128_from_u64(0);
+            hi128 = nth_prime_upper128(nfirst128.lo);
+            stop = nfirst128.lo;
+        }
+
+        Ctx128 out128;
+        memset(&out128, 0, sizeof out128);
+        out128.print   = !quiet && !table;
+        out128.table   = table;
+        out128.measure = table;
+        out128.stop_at = stop;
+
+        double t0 = qpc_ms();
+        run128(lo128, hi128, &out128, !quiet);
+        double t1 = qpc_ms();
+
+        if (quiet)
+            printf("Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
+                   (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, 1);
+        else
+            fprintf(stderr, "Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
+                    (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, 1);
+
+        free(out128.bp); free(out128.bt); free(out128.bc);
+        DeleteCriticalSection(&g_status_cs);
+        return 0;
+    }
 
     u64 low = 0, high = 0;
     if (mode == MODE_LIMIT) { low = 0; high = limit; }

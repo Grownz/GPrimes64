@@ -16,6 +16,30 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [3.1.0] - 2026-10-06
+
+### Added
+- **128-bit support.** If a limit, count or range value exceeds the 64-bit
+  range, the program switches to **128-bit arithmetic** automatically. Values
+  beyond 64-bit are handled with **Miller-Rabin** (probabilistic). The sieve
+  methods (`sieve`, `atkin`, `sundaram`) and `trial` are not available there
+  and are rejected with a one-sentence error:
+  `method 'X' is not available for numbers beyond 64-bit; use -m miller`.
+  Range/limit/count modes and plain/quiet/table output are supported in
+  128-bit mode (single-threaded).
+- **Average CPU in the console window title.** During a computation the title
+  shows `gprimes64.exe - CPU NN%` (average over all threads), updated once per
+  second; the original title is restored afterwards.
+
+### Changed
+- Help text documents the extended number range (0 ... 2^128-1).
+
+### Verification
+- 128-bit results independently confirmed: primes in
+  `[2^64+1, 2^64+84]`, `M127 = 2^127-1` (prime) and `2^127-3` (composite).
+
+---
+
 ## [3.0.0] - 2026-10-06
 
 ### Changed

@@ -81,8 +81,11 @@ Count: 78498, Time: 0.001 s, Method: sieve, Threads: 1
 
 ## Number range and limits
 
-- **Valid number range:** `0 ... 18446744073709551615` (= 2^64-1). Larger
-  values are rejected with a clear message (the program uses 64-bit integers).
+- **Valid number range:** `0 ... 340282366920938463463374607431768211455`
+  (= 2^128-1). Values beyond 64-bit are handled with **128-bit arithmetic**;
+  there only `-m miller` (probabilistic) is available. The sieve methods
+  (`sieve`, `atkin`, `sundaram`) and `trial` are rejected with a one-sentence
+  error: `method 'X' is not available for numbers beyond 64-bit; use -m miller`.
 - **Sieve vs. large numbers:** the `sieve` method builds base primes up to
   `sqrt(N)`. For large `high` (near 2^64) the memory requirement grows strongly
   (bitset + prime array per thread). Before starting, the estimated requirement
@@ -97,7 +100,7 @@ Count: 78498, Time: 0.001 s, Method: sieve, Threads: 1
   ```
 
 - For **very large numbers** or **small ranges near large values**, `-m miller`
-  or `-m trial` are much better suited (they test individual candidates instead
+  is much better suited than the sieve (it tests individual candidates instead
   of sieving up to `sqrt(N)`).
 
 ## Live progress (CPU per thread + RAM + extrapolation)
@@ -116,6 +119,10 @@ computation through `|` -> `/` -> `-` -> `\`.
 The columns are **fixed** (thread index and percentage values in fixed width)
 so the line does not jump due to changing number lengths; `=` and `:` stay at
 fixed positions.
+
+During a computation the **console window title** additionally shows the
+average CPU load over all threads, updated once per second:
+`gprimes64.exe - CPU 73%`. The original title is restored afterwards.
 
 ### Extrapolation
 
