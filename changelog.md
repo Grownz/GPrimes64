@@ -16,6 +16,20 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [3.2.2] - 2026-10-06
+
+### Fixed
+- **Console window title display.** The title was only updated if the original
+  console title could be read (non-empty) and only while the live line was
+  active - so it stayed unchanged e.g. with `-q`, in Windows Terminal/ConPTY,
+  or with an empty initial title. The title is now set **immediately at the
+  start** and updated once per second whenever the process has a console,
+  independent of the live line. Format:
+  `gprimes64.exe @64Bit - CPU NN%` / `gprimes64.exe @128Bit - CPU NN%`; the
+  original title is restored afterwards.
+
+---
+
 ## [3.2.1] - 2026-10-06
 
 ### Fixed

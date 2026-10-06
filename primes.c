@@ -52,7 +52,7 @@
 typedef uint64_t u64;
 typedef uint8_t  u8;
 
-#define PRIMES_VERSION "3.2.1"
+#define PRIMES_VERSION "3.2.2"
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
@@ -804,6 +804,7 @@ typedef struct {
     int            enabled;
     int            draw;            /* draw the status line                 */
     int            wide;            /* 1 = 128-bit range, 0 = 64-bit range   */
+    int            title_active;    /* update the console title              */
     int            have_title;      /* console title was saved              */
     char           orig_title[512];
     double         start_ms;
@@ -956,7 +957,7 @@ static unsigned __stdcall monitor_main(void *p)
 
         /* Console window title: average CPU over all threads, once per second. */
         tick++;
-        if (m->have_title && (tick % 10 == 0)) {
+        if (m->title_active && (tick % 10 == 0)) {
             double avg = n > 0 ? pct_sum / (double)n : 0.0;
             char tbuf[128];
             snprintf(tbuf, sizeof tbuf, "gprimes64.exe @%sBit - CPU %.0f%%",
@@ -997,12 +998,17 @@ static void monitor_start(MonitorHandle *mh, HANDLE *handles, const u8 *colors,
     mh->mon.last_color = COL_WHITE;
     mh->mon.next_pct = 10.0;
     int stderrcon = handle_is_console(STD_ERROR_HANDLE);
-    int hascon = GetConsoleWindow() != NULL;
+    int stdoutcon = handle_is_console(STD_OUTPUT_HANDLE);
+    int hascon = GetConsoleWindow() != NULL || stderrcon || stdoutcon;
     mh->mon.draw = live && (stderrcon || progress_forced());
-    mh->mon.enabled = n > 0 && (mh->mon.draw || (title && hascon));
-    if (mh->mon.enabled && title && hascon) {
+    mh->mon.title_active = title && hascon;
+    mh->mon.enabled = n > 0 && (mh->mon.draw || mh->mon.title_active);
+    if (mh->mon.title_active) {
         if (GetConsoleTitleA(mh->mon.orig_title, (DWORD)sizeof mh->mon.orig_title) > 0)
             mh->mon.have_title = 1;
+        char tbuf[128];
+        snprintf(tbuf, sizeof tbuf, "gprimes64.exe @%sBit - CPU 0%%", wide ? "128" : "64");
+        SetConsoleTitleA(tbuf);
     }
     if (mh->mon.enabled)
         mh->thread = (HANDLE)_beginthreadex(NULL, 0, monitor_main, &mh->mon, 0, NULL);
@@ -1051,12 +1057,10 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
 
     if (threads <= 1 || low > high) {
         u8 color = COL_WHITE;                     /* single thread: white */
-        HANDLE one = NULL, handles[1];
+        HANDLE one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+        HANDLE handles[1];
         int n = 0;
-        if (live) {
-            one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
-            if (one) { handles[0] = one; n = 1; }
-        }
+        if (one) { handles[0] = one; n = 1; }
         StreamCtx *streams1[1];
         streams1[0] = out;
         MonitorHandle mh;
@@ -1536,12 +1540,10 @@ static unsigned __stdcall thread128_main(void *p) {
 
 static void run128(u128 low, u128 high, int threads, Ctx128 *out, int live) {
     if (threads <= 1 || u128_cmp(low, high) >= 0) {
-        HANDLE one = NULL, handles[1];
+        HANDLE one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+        HANDLE handles[1];
         int n = 0;
-        if (live) {
-            one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
-            if (one) { handles[0] = one; n = 1; }
-        }
+        if (one) { handles[0] = one; n = 1; }
         u8 color = COL_WHITE;
         StreamCtx *streams1[1];
         streams1[0] = &out->prog;
