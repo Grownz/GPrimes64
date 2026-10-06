@@ -22,12 +22,12 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          .\primes.exe -q 1000000
-          .\primes.exe -m miller -q 1000000
-          .\primes.exe -c 100 | Select-Object -Last 1
+          .\gprimes64.exe -q 1000000
+          .\gprimes64.exe -m miller -q 1000000
+          .\gprimes64.exe -c 100 | Select-Object -Last 1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: primes-exe
-          path: primes.exe
+          name: gprimes64-exe
+          path: gprimes64.exe

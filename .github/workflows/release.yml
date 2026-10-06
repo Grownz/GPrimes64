@@ -21,9 +21,9 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
-        run: .\primes.exe -q 1000000
+        run: .\gprimes64.exe -q 1000000
 
-      - name: Release-Notes aus changelog.md (inkl. nicht gepushter Hotfixes)
+      - name: Release notes from changelog.md (incl. hotfixes not released separately)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -31,16 +31,16 @@ jobs:
           $repo = "${{ github.repository }}"
           $cur  = "${{ github.ref_name }}".TrimStart('v')
 
-          # Vorheriges Release (letzter Tag mit Release) ermitteln
+          # Determine the previous release (last tag that has a release)
           $prev = ""
           $prevJson = (gh api "repos/$repo/releases/latest" 2>$null) | Out-String
           if ($LASTEXITCODE -eq 0 -and $prevJson.Trim()) {
             $prev = (ConvertFrom-Json $prevJson).tag_name
             if ($prev) { $prev = $prev.TrimStart('v') }
           }
-          if ($prev -eq $cur) { $prev = "" }   # Re-Run fuer denselben Tag
+          if ($prev -eq $cur) { $prev = "" }   # re-run for the same tag
 
-          # Alle Sektionen von oben bis (ausschliesslich) zum vorherigen Release
+          # All sections from the top up to (but excluding) the previous release
           $lines = Get-Content -LiteralPath changelog.md -Encoding UTF8
           $body  = New-Object System.Collections.Generic.List[string]
           $inSection = $false
@@ -52,7 +52,7 @@ jobs:
                 if ($ver -eq $prev) { break }
               } else {
                 $sections++
-                if ($sections -gt 1) { break }   # erstes Release: nur aktueller Eintrag
+                if ($sections -gt 1) { break }   # first release: current entry only
               }
               $inSection = $true
             }
@@ -70,4 +70,4 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           body_path: release_notes.md
-          files: primes.exe
+          files: gprimes64.exe

@@ -1,288 +1,241 @@
-# primes – Primzahlen berechnen (Windows x64)
+# GPrimes64 - slim prime generator (Win x64)
 
-Eine bewusst **schlanke Kommandozeilenanwendung** zur Primzahlberechnung.
-Geschrieben in reinem **C (C11)**, kompiliert mit MSVC (x64) zu einer einzelnen
-nativen EXE mit **statisch gelinkter C-Runtime**.
+A deliberately **slim command-line application** for prime computation.
+Written in pure **C (C11)**, compiled with MSVC (x64) into a single native EXE.
 
-Auswählbar sind mehrere **mathematische Verfahren**, **Multithreading**, eine
-**ASCII-Tabelle** mit der **Berechnungszeit je Primzahl**, **farbcodierte
-Threads** sowie ein **Live-Fortschritt** (CPU je Thread + RAM).
+It offers several **mathematical methods**, **multithreading**, an **ASCII
+table** with the **compute time per prime**, **color-coded threads** and a
+**live progress** display (CPU per thread + RAM + extrapolated duration).
 
-> Versionshistorie und Änderungen: siehe [changelog.md](changelog.md).
-> Versionierungsschema: 1. Stelle = Rewrite, 2. Stelle = Hauptfeatures,
-> 3. Stelle = Hotfixes. Aktuell: **2.1.8**.
+## Why slim?
 
-## Warum schlank?
+| Property          | Value                                        |
+|-------------------|----------------------------------------------|
+| Language          | C (no framework, no VM)                      |
+| EXE size          | about 176 KB                                 |
+| DLL dependencies  | only `KERNEL32.dll`                          |
+| Memory usage      | constant for `sieve`/`trial`/`miller` & `-q` |
 
-| Eigenschaft        | Wert                                           |
-|--------------------|------------------------------------------------|
-| Sprache            | C (kein Framework, keine VM)                   |
-| EXE-Größe          | ca. 172 KB                                     |
-| DLL-Abhängigkeiten | nur `KERNEL32.dll` (kein VC++ Redistributable) |
-| Speicherverbrauch  | konstant bei `sieve`/`trial`/`miller` & `-q`   |
+## How it works
 
-Die statische CRT (`/MT`) bedeutet: die EXE läuft auf jedem Windows-x64-System
-**ohne Installation** weiterer Komponenten.
+### Methods (`-m`)
 
-## Build
+| Name        | Method                                      | Notes                                  |
+|-------------|---------------------------------------------|----------------------------------------|
+| `sieve`     | Segmented sieve of Eratosthenes             | **default**, fast, memory-efficient    |
+| `atkin`     | Sieve of Atkin                              | full sieve; memory ~ N/8 bytes         |
+| `sundaram`  | Sieve of Sundaram                           | full sieve; memory ~ N/16 bytes        |
+| `trial`     | Trial division (6k +/- 1)                   | simple, slow for large N               |
+| `miller`    | Miller-Rabin (deterministic, 64-bit)        | ideal for large numbers/ranges         |
 
-Voraussetzung: Visual Studio 2022 **Build Tools** mit C++-Workload
-(MSVC + Windows SDK). Einfach ausführen:
+`atkin` and `sundaram` are **full sieves**: they need memory proportional to
+the upper bound N. For large N or large ranges, `sieve`, `trial` or `miller`
+are the right choice. A guard prevents a hanging system and prints a clear
+error.
 
-```bat
-build.bat
-```
+### Internals
 
-## Verwendung
+1. **Segmented sieve (default):** odd numbers only, in adaptive blocks
+   (~256 blocks, 16 KiB-4 MiB). Memory stays bounded; for large *ranges* only
+   the base primes up to `sqrt(high)` are needed.
+2. **Atkin / Sundaram:** full sieves with a bit array (compact storage).
+3. **Trial division:** test by 2, 3 and all `6k +/- 1` up to `sqrt(n)`.
+4. **Miller-Rabin:** 7 bases `{2,325,9375,28178,450775,9780504,1795265022}`,
+   proven correct for all 64-bit numbers. Modular multiplication via
+   `_umul128`/`_udiv128` (no overflow).
+5. **First N primes:** upper bound via `n*(ln n + ln ln n)`.
+6. **Overflow-safe tests** (`p > n / p` instead of `p*p > n`).
 
-```text
-primes <N>                 Alle Primzahlen bis einschliesslich N
-primes -c <N>              Die ersten N Primzahlen
-primes -r <A> <B>          Alle Primzahlen im Bereich A bis B
+Correctness is checked against known values (all five methods produce
+bit-identical results):
+`π(10^6) = 78498`, `π(10^8) = 5761455`, 1000000th prime = 15485863,
+`π([10^12, 10^12+10^6]) = 36249`.
 
-Optionen:
-  -l, --limit <N>          Wie 'primes <N>'
-  -c, --count <N>          Die ersten N Primzahlen
-  -r, --range <A> <B>      Primzahlen im Bereich A..B
-  -m, --method <name>      Berechnungsverfahren (Standard: sieve)
-  -t, --time               ASCII-Tabelle: Primzahl | Berechnungszeit
-  -j, --threads <N>        N Threads verwenden (1 = aus, Standard)
-      --mt                 So viele Threads wie CPU-Kerne (-j 0)
-      --list-methods       Verfuegbare Verfahren anzeigen
-  -q, --quiet              Nur die Zusammenfassung ausgeben (nichts sonst)
-  -h, --help               Hilfe anzeigen
-  -v, --version            Version anzeigen
-```
-
-**Es wird immer eine Zusammenfassung ausgegeben** – normal auf `stderr`,
-bei `-q` als einzige Ausgabe auf `stdout`:
+## Usage
 
 ```text
-Anzahl: 78498, Zeit: 0.001 s, Verfahren: sieve, Threads: 1
+gprimes64 <N>                 All primes up to and including N
+gprimes64 -c <N>              The first N primes
+gprimes64 -r <A> <B>          All primes in the range A to B
+
+Options:
+  -l, --limit <N>             Same as 'gprimes64 <N>'
+  -c, --count <N>             The first N primes
+  -r, --range <A> <B>         Primes in the range A..B
+  -m, --method <name>         Computation method (default: sieve)
+  -t, --time                  ASCII table: prime | compute time
+  -j, --threads <N>           Use N threads (1 = off, default)
+      --mt                    As many threads as CPU cores (-j 0)
+      --list-methods          List available methods
+  -q, --quiet                 Output only the summary (nothing else)
+  -h, --help                  Show this help
+  -v, --version               Show version
 ```
 
-## Mathematische Verfahren (`-m`)
+A **summary is always printed** - normally on `stderr`, and with `-q` as the
+only output on `stdout`:
 
-| Name        | Verfahren                                   | Hinweis                                   |
-|-------------|---------------------------------------------|-------------------------------------------|
-| `sieve`     | Segmentiertes Sieb des Eratosthenes         | **Standard**, schnell, speicherschonend   |
-| `atkin`     | Sieb des Atkin                              | klassisch; Speicher ~ N/8 Byte            |
-| `sundaram`  | Sieb des Sundaram                           | klassisch; Speicher ~ N/16 Byte           |
-| `trial`     | Probedivision (6k ± 1)                      | einfach, langsam bei großen N             |
-| `miller`    | Miller-Rabin (deterministisch für 64 Bit)   | ideal für große Zahlen/Bereiche           |
+```text
+Count: 78498, Time: 0.001 s, Method: sieve, Threads: 1
+```
 
-`atkin` und `sundaram` sind **vollständige Siebe**: sie benötigen Speicher
-proportional zur Obergrenze N. Für große N oder große Bereiche sind `sieve`,
-`trial` oder `miller` die richtige Wahl. Eine Schutzprüfung verhindert dabei
-ein hängendes System und gibt einen klaren Fehler aus.
+## Number range and limits
 
-## Zahlenbereich und Grenzen
-
-- **Gültiger Zahlenbereich:** `0 … 18446744073709551615` (= 2⁶⁴−1). Größere
-  Werte werden mit einer klaren Meldung abgelehnt (das Programm rechnet in
-  64-Bit-Ganzzahlen).
-- **Sieb vs. große Zahlen:** Das `sieve`-Verfahren baut Basisprimzahlen bis
-  √N auf. Bei großem `high` (nahe 2⁶⁴) wächst der Speicherbedarf stark
-  (Bitset + Primzahl-Array je Thread). Vor dem Start wird der geschätzte
-  Bedarf gegen den **verfügbaren RAM** geprüft; reicht er nicht, bricht das
-  Programm mit Schätzung und Alternativen ab:
+- **Valid number range:** `0 ... 18446744073709551615` (= 2^64-1). Larger
+  values are rejected with a clear message (the program uses 64-bit integers).
+- **Sieve vs. large numbers:** the `sieve` method builds base primes up to
+  `sqrt(N)`. For large `high` (near 2^64) the memory requirement grows strongly
+  (bitset + prime array per thread). Before starting, the estimated requirement
+  is checked against the **available RAM**; if it does not fit, the program
+  aborts with an estimate and alternatives:
 
   ```text
-  Fehler: Obergrenze … ist fuer das Sieb-Verfahren zu gross.
-          Geschaetzter Basisprimzahl-Speicher ~1.26 GB pro Thread x 8 = ~10.1 GB,
-          verfuegbar sind nur ~34.2 GB.
-          Bitte -m miller oder -m trial verwenden (oder -j reduzieren).
+  Error: upper bound ... is too large for the sieve method.
+         Estimated base-prime memory ~1.26 GB per thread x 8 = ~10.1 GB,
+         but only ~34.2 GB are available.
+         Please use -m miller or -m trial (or reduce -j).
   ```
 
-- Für **sehr große Zahlen** oder **kleine Bereiche nahe großer Werte** sind
-  `-m miller` oder `-m trial` deutlich besser geeignet (sie prüfen einzelne
-  Kandidaten, statt bis √N zu sieben).
+- For **very large numbers** or **small ranges near large values**, `-m miller`
+  or `-m trial` are much better suited (they test individual candidates instead
+  of sieving up to `sqrt(N)`).
 
-## ASCII-Tabelle mit Berechnungszeit (`-t`)
+## Live progress (CPU per thread + RAM + extrapolation)
 
-Erzeugt eine Tabelle mit den Spalten **`Primzahl`** und **`Berechnungszeit`**
-(Zeit, die der jeweilige Thread zum Auffinden dieser Primzahl benötigt hat, in
-**ms**). Die einmalige Setup-Zeit wird nicht einer einzelnen Primzahl
-zugeschrieben; die Markierzeit des Siebs wird anteilig auf die gefundenen
-Primzahlen verteilt.
-
-```text
-> primes -t -m miller -c 8
-+----------+-----------------+
-| Primzahl | Berechnungszeit |
-+----------+-----------------+
-|        2 |        0.000 ms |
-|        3 |        0.003 ms |
-|        5 |        0.001 ms |
-|        7 |        0.001 ms |
-|       11 |        0.001 ms |
-|       13 |        0.000 ms |
-|       17 |        0.001 ms |
-|       19 |        0.000 ms |
-+----------+-----------------+
-Anzahl: 8, Zeit: 0.000 s, Verfahren: miller, Threads: 1
-```
-
-Die Tabelle geht auf `stdout`, die Zusammenfassung auf `stderr`.
-`-t` und `-q` schließen sich aus (die Fehlermeldung erklärt es in einem Satz).
-
-## Farbcodierte Threads (ANSI 256)
-
-Bei Multithreading erhält **jeder Thread** eine Farbe aus dem ANSI-256-Farbraum:
-
-- Die Farben liegen **möglichst weit auseinander** (Farthest-Point-Auswahl im
-  RGB-Raum des 6×6×6-Farbwürfels).
-- Die **16 Grautöne sind verboten** (neutrale `r=g=b`-Farben werden
-  ausgeschlossen).
-- Sonderfall: Bei **nur einem Thread** ist die Farbe **weiß**.
-
-In der **Live-Zeile** sind Label und Wert je Thread eingefärbt:
-
-```text
-CPU/Thread: T01= 94% T02= 94% T03= 94% ... T12= 94% | RAM: 28.8 MB
-```
-
-In der **`-t`-Tabelle** werden die **vertikalen Balken** jeder Zeile in der
-Farbe des Threads gezeichnet, der den Wert berechnet hat:
-
-```text
-| Primzahl | Berechnungszeit |   ← Balken je Zeile unterschiedlich eingefärbt
-```
-
-Farben sind auf echten Konsolen automatisch aktiv. Bei Umleitung:
-`PRIMES_COLOR=1` erzwingt sie.
-
-## Live-Fortschritt (CPU je Thread + RAM + Extrapolation)
-
-Während der Berechnung zeigt `stderr` in einer **stehenden Zeile**
-(Wagenrücklauf) die CPU-Last je Thread und den RAM-Verbrauch. Die Live-Zeile
-erscheint in **allen Berechnungsarten, außer bei `-q`**.
+During the computation, `stderr` shows in a **standing line** (carriage return)
+the CPU load per thread and the RAM usage. The live line appears in **all modes
+except `-q`**.
 
 ```text
 CPU/Thread: T01= 94% T02=100% T03= 97% ... / RAM: 28.8 MB
 ```
 
-Der Trenner zwischen Thread- und RAM-Anzeige **rotiert** während der
-Berechnung durch `|` → `/` → `-` → `\`.
+The separator between the thread and RAM display **rotates** during the
+computation through `|` -> `/` -> `-` -> `\`.
 
-Die Spalten sind **fest** (Thread-Index und Prozentwerte in fester Breite),
-damit die Zeile durch wechselnde Zahlenlängen nicht springt; `=` und `:`
-stehen an fixen Positionen.
+The columns are **fixed** (thread index and percentage values in fixed width)
+so the line does not jump due to changing number lengths; `=` and `:` stay at
+fixed positions.
 
 ### Extrapolation
 
-Die Extrapolation steht **immer** am Ende der Live-Zeile. Solange die erste
-Extrapolation noch nicht erfolgt ist, werden **alle Zahlenpositionen durch
-`-` ersetzt**:
+The extrapolation is **always** shown at the end of the live line. Until the
+first extrapolation, **all number positions are replaced by `-`**:
 
 ```text
-... | RAM: 28.8 MB | --% / --:--:-- sek von --:--:-- sek
+... | RAM: 28.8 MB | --% / --:--:-- sec of --:--:-- sec
 ```
 
-Ab ca. **10 % der in den Threads bearbeiteten Zahlen** (nicht der
-ausgegebenen Primzahlen) wird sie durch echte, **live** laufende Werte ersetzt.
-Bei großem `high` zählt dabei auch der Basisprimzahl-Aufbau bis √(high) mit,
-der dort die Laufzeit dominiert. Die Streichschritte werden dabei
-**stride-gewichtet** (Cache-Line-Effekt) gezählt und die Schätzung geglättet,
-sodass die Dauer sofort realistisch ist:
+From about **10% of the numbers processed in the threads** (not the emitted
+primes) it is replaced by real, **live** values. For large `high` the
+base-prime build up to `sqrt(high)` is included as well, since it dominates the
+runtime there. The marking steps are counted **stride-weighted** (cache-line
+effect) and the estimate is smoothed, so the duration is immediately realistic:
 
 ```text
-... | RAM: 28.8 MB | 13% / 00:00:39 sek von 00:05:00 min
+... | RAM: 28.8 MB | 13% / 00:00:39 sec of 00:05:00 min
                     ^       ^              ^
-               Prozent   verstrichen   extrapolierte Gesamtdauer
+               percent   elapsed     extrapolated total duration
 ```
 
-Das Einheitenkürzel richtet sich nach der Größenordnung (für verstrichene
-**und** extrapolierte Zeit): `< 60 s` → `sek`, `< 1 h` → `min`, sonst `std`.
-Im obigen Beispiel ist die verstrichene Zeit 39 Sekunden (`sek`) und die
-extrapolierte Dauer 5 Minuten (`min`).
+The unit suffix follows the magnitude (for elapsed **and** extrapolated time):
+`< 60 s` -> `sec`, `< 1 h` -> `min`, otherwise `h`. In the example above the
+elapsed time is 39 seconds (`sec`) and the extrapolated duration is 5 minutes
+(`min`).
 
-- Die erwartete Dauer wird ab 10 % **alle weiteren 5 %** neu extrapoliert und
-  zusätzlich **kontinuierlich nach oben korrigiert** (rot), falls die reale Zeit
-  sie überholen würde – sie liegt dadurch nie unter der verstrichenen Zeit.
-- Ihre Farbe richtet sich nach der Tendenz:
-  - **rot** – länger als die vorherige Schätzung
-  - **grün** – kürzer als die vorherige Schätzung
-  - **weiß** – erste Schätzung oder Abweichung ≤ 5 %
-- Prozent und verstrichene Zeit werden bei jeder Aktualisierung (~10×/s)
-  fortgeschrieben.
+- The expected duration is re-extrapolated **every further 5%** and additionally
+  **corrected upward continuously** (shown in red) if the real time would
+  overtake it - it therefore never falls below the elapsed time.
+- Its color follows the trend:
+  - **red** - longer than the previous estimate
+  - **green** - shorter than the previous estimate
+  - **white** - first estimate or deviation <= 5%
+- Percent and elapsed time are updated on every refresh (~10x/s).
 
-Damit die Live-Zeile stabil bleibt und nicht flackert, wird sie **in-place
-überschrieben** (ohne Zeilenlöschen). Beim Konsolen-Streaming werden die
-Primzahlen kurz **gepuffert** und zusammen mit der Statuszeile nur ~10×/s
-ausgegeben. Bei umgeleitetem `stdout` wird direkt geschrieben – die Datei
-bleibt sauber (nur Primes), die Live-Zeile bleibt auf `stderr`.
+To keep the live line stable and flicker-free, it is **overwritten in place**
+(no line clearing). During console streaming the primes are briefly **buffered**
+and emitted only ~10x/s together with the status line. With redirected `stdout`
+the file stays clean (primes only) and the live line stays on `stderr`.
 
-- Erzwingen (z. B. zum Testen/Umlenken): `PRIMES_PROGRESS=1`.
+- Force it (e.g. for testing/redirection): `PRIMES_PROGRESS=1`.
 
 ## Multithreading (`-j` / `--mt`)
 
 ```bat
-primes -m sieve -j 4   -q 1000000000   REM 4 Threads
-primes -m sieve --mt   -q 1000000000   REM alle CPU-Kerne
+gprimes64 -m sieve -j 4   -q 1000000000   REM 4 threads
+gprimes64 -m sieve --mt   -q 1000000000   REM all CPU cores
 ```
 
-Der Bereich wird in zusammenhängende Blöcke geteilt, jeder Thread berechnet
-einen Block, anschließend wird **in aufsteigender Reihenfolge** ausgegeben –
-das Ergebnis ist deterministisch und identisch zur Single-Thread-Ausgabe.
+The range is split into contiguous blocks, each thread computes one block, and
+the output is emitted **in ascending order** - deterministic and identical to
+the single-threaded output.
 
-Beispiel-Skalierung (Eratosthenes bis 10⁹, 50.847.534 Primzahlen):
+Example scaling (sieve up to 10^9, 50847534 primes):
 
-| Threads | Zeit    |
-|---------|---------|
-| 1       | 0.92 s  |
-| 4       | 0.42 s  |
-| auto    | 0.25 s  |
+| Threads | Time   |
+|---------|--------|
+| 1       | 0.92 s |
+| 4       | 0.42 s |
+| auto    | 0.25 s |
 
-## Beispiele
+## Examples
 
 ```bat
-primes -t 100
-primes -m atkin -q 100000000
-primes -m sieve -j 8 -q 1000000000
-primes -m miller --mt -q -r 1000000000000 1000001000000
+gprimes64 -t 100
+gprimes64 -m atkin -q 100000000
+gprimes64 -m sieve -j 8 -q 1000000000
+gprimes64 -m miller --mt -q -r 1000000000000 1000001000000
 ```
 
-## Funktionsweise
+## Color coding (ANSI 256)
 
-1. **Segmentiertes Sieb (Standard):** Nur ungerade Zahlen, Blöcke von ~4 Mio.
-   Zahlen. Speicher konstant, auch bei großen Obergrenzen. Für große *Bereiche*
-   werden nur die Basisprimzahlen bis `sqrt(high)` benötigt.
-2. **Atkin / Sundaram:** vollständige Siebe mit Bit-Array (kompakte Speicherung).
-3. **Probedivision:** Test durch 2, 3 und alle `6k ± 1` bis `sqrt(n)`.
-4. **Miller-Rabin:** 7 Basen `{2,325,9375,28178,450775,9780504,1795265022}`,
-   beweisbar korrekt für alle 64-Bit-Zahlen. Multiplikation modulo über
-   `_umul128`/`_udiv128` (kein Overflow).
-5. **Erste N Primzahlen:** Obergrenze über `n·(ln n + ln ln n)`.
-6. **Overflow-sichere Tests** (`p > n / p` statt `p*p > n`).
+With multithreading, **each thread** gets a color from the ANSI 256 color space:
 
-Korrekt getestet u. a. gegen bekannte Werte (alle fünf Verfahren liefern
-bit-identische Ergebnisse):
-`π(10⁶) = 78498`, `π(10⁸) = 5761455`, 100000. Primzahl = 1299709,
-`π` im Bereich `[10¹², 10¹²+10⁶] = 36249`.
+- Colors are **as far apart as possible** (farthest-point selection in the RGB
+  space of the 6x6x6 color cube).
+- The **16 grayscale tones are excluded** (neutral `r=g=b` colors).
+- Special case: with **one thread**, the color is **white**.
 
-## Umgebungsvariablen
+In the **live line** the label and value of each thread are colored:
 
-| Variable          | Wirkung                                            |
-|-------------------|----------------------------------------------------|
-| `PRIMES_COLOR=1`  | Farben erzwingen (auch bei umgeleitetem stdout)    |
-| `PRIMES_PROGRESS=1` | Live-Zeile erzwingen (auch ohne Konsole)         |
+```text
+CPU/Thread: T01= 94% T02= 94% T03= 94% ... T12= 94% / RAM: 28.8 MB
+```
 
-## Hinweis: unsignierte Binärdatei / AV-Fehlalarme
+In the **`-t` table** the **vertical bars** of each row are drawn in the color
+of the thread that computed the value:
 
-Die EXE ist **nicht digital signiert** und wird aus Quellcode gebaut. Manche
-Virenscanner melden dafür **generische Heuristik-Fehlalarme** (z. B.
-`Trojan.Malware.…susgen`), obwohl das Programm ausschließlich Primzahlen
-berechnet. Gegenmaßnahmen:
+```text
+| Prime | Compute time |   <- bars colored per row
+```
 
-- **Aus dem Quellcode selbst bauen** (`build.bat`) – der Quellcode ist offen.
-- Die Binärdatei stammt aus **GitHub Releases** (nicht aus dem Repo); Hash prüfen.
-- Fehlalarme ggf. beim jeweiligen Hersteller melden.
+Colors are enabled automatically on real consoles. When redirecting,
+`PRIMES_COLOR=1` forces them.
 
-## Dateien
+## Environment variables
 
-- `primes.c` – Quellcode (eine Datei)
-- `build.bat` – Build-Skript
-- `changelog.md` – laufender Changelog (seit 1.0.0)
-- `LICENSE` – MIT-Lizenz
-- `.github/workflows/` – CI (Build) und Release (EXE-Anhang bei Tag `v*`)
+| Variable            | Effect                                             |
+|---------------------|----------------------------------------------------|
+| `PRIMES_COLOR=1`    | Force colors (also with redirected stdout)         |
+| `PRIMES_PROGRESS=1` | Force the live line (also without a console)       |
+
+## Files
+
+- `primes.c` - source code (single file)
+- `build.bat` - build script
+- `changelog.md` - continuously maintained changelog (since 1.0.0, English)
+- `ChangelogOld_ger.md` - the previous German changelog (no longer maintained)
+- `LICENSE` - MIT license
+- `CONTRIBUTING.md` - contribution guide
+- `.github/workflows/` - CI (build) and release (attach EXE on tag `v*`)
+
+## Build
+
+Prerequisite: Visual Studio 2022 **Build Tools** with the C++ workload
+(MSVC + Windows SDK). Simply run:
+
+```bat
+build.bat
+```
+
+This produces `gprimes64.exe` in the project directory.

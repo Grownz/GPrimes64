@@ -1,262 +1,276 @@
-# Changelog – primes
+# Changelog - GPrimes64
 
-Alle nennenswerten Änderungen an diesem Projekt, laufend gepflegt.
-Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
+All notable changes to this project, maintained continuously.
+Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Versionsschema
+## Versioning scheme
 
-| Stelle | Beispiel | Bedeutung                         |
-|--------|----------|-----------------------------------|
-| 1.     | `2.x.y`  | kompletter Code-Rewrite           |
-| 2.     | `x.1.y`  | Update von Hauptfeatures          |
-| 3.     | `x.y.1`  | Hotfixes                          |
+| Position | Example | Meaning           |
+|----------|---------|-------------------|
+| 1st      | `3.x.y` | full code rewrite |
+| 2nd      | `x.1.y` | major features    |
+| 3rd      | `x.y.1` | hotfixes          |
 
-> Diese Konvention gilt ab Version 2.0.1 und wird **rückwirkend** auf die
-> gesamte Historie seit 1.0.0 angewandt.
-
----
-
-## [2.1.8] – 2026-10-06
-
-### Behoben
-- **Live-Zeile: falsches Einheitenkürzel.** Die Einheit war fest verdrahtet
-  (`sek` für die verstrichene, `min` für die extrapolierte Zeit), sodass z. B.
-  22 Sekunden als „00:00:22 min" erschienen. Jetzt richtet sich die Einheit
-  nach der Größenordnung – für verstrichene **und** extrapolierte Zeit:
-  - `< 60 s` → `sek`
-  - `< 1 h`  → `min`
-  - sonst   → `std`
+> This convention applies from version 2.0.1 and is applied **retroactively**
+> to the entire history since 1.0.0.
 
 ---
 
-## [2.1.7] – 2026-10-06
+## [3.0.0] - 2026-10-06
 
-### Behoben
-- **Irreführende Fehlermeldung bei zu großen Zahlen** (z. B.
-  `-r 100000000000000000000 …` → „erwartet zwei Zahlen A B"): `parse_u64`
-  unterscheidet jetzt **Überlauf** (`ERANGE`, Wert > 2⁶⁴−1) von ungültiger
-  Eingabe. Die Meldung nennt das betroffene Argument (Grenze A/B, Obergrenze,
-  Anzahl) und den Maximalwert:
-  `Fehler: Grenze A (-r) … ist zu gross (max. 18446744073709551615 = 2^64-1).`
+### Changed
+- **Full code rewrite / translation to English.** All user-facing texts
+  (help, errors, table headers, live line, summary) and the source comments
+  are now in English. Functionality is unchanged.
+- Application renamed to **GPrimes64**: the binary is `gprimes64.exe`, the
+  version output reads `GPrimes64 X.Y.Z`, and usage examples use `gprimes64`.
+- README restructured and translated to English.
+- Changelog translated to English and continued here; the previous German
+  changelog is kept as `ChangelogOld_ger.md` and is no longer maintained.
 
-### Hinzugefügt
-- **Machbarkeitsprüfung für das Sieb-Verfahren:** Der geschätzte
-  Basisprimzahl-Speicher (Bitset + Primzahl-Array je Thread) wird vor dem Start
-  gegen den verfügbaren RAM geprüft. Bei Überschreitung erfolgt ein klarer
-  Abbruch mit Schätzung und Alternativen (`-m miller`/`-m trial`, `-j`
-  reduzieren). `miller`/`trial` sind davon nicht betroffen.
-- **Hilfe/Doku:** gültiger Zahlenbereich `0 … 18446744073709551615 (2⁶⁴−1)`
-  und Empfehlung für sehr große Zahlen dokumentiert.
-
----
-
-## [2.1.6] – 2026-10-05
-
-### Behoben
-- **Live-Zeile:** Die reale Zeit konnte die extrapolierte Gesamtdauer
-  überholen (z. B. `100% / 00:00:49 sek von 00:00:22 sek`). Ursache: Die
-  Schätzung wurde nur an den 5-%-Schwellen neu berechnet; wenn der Fortschritt
-  am Ende nur noch langsam vorankam, wurde keine Schwelle mehr erreicht und die
-  Schätzung „fror ein".
-  - Die erwartete Dauer wird jetzt zusätzlich **kontinuierlich nach oben
-    korrigiert** (rot dargestellt), sodass die verstrichene Zeit die
-    extrapolierte Dauer nie mehr überschreitet.
-  - Verifiziert: über zwei lange Läufe (50 s bzw. 27 s) gab es **0 Zeilen**
-    mit `elapsed > expected`; die Schätzung konvergiert auf die reale Dauer.
+### Verification
+- All methods produce identical results; `π(10^6) = 78498`,
+  `π(10^8) = 5761455`, 1000000th prime = 15485863,
+  `π([10^12, 10^12+10^6]) = 36249`.
+- Only dependency remains `KERNEL32.dll`.
 
 ---
 
-## [2.1.5] – 2026-10-05
+## [2.1.8] - 2026-10-06
 
-### Geändert
-- **Dauerabschätzung der Live-Zeile** deutlich verbessert:
-  - Die Streichschritte des Basisprimzahl-Siebs werden jetzt **stride-gewichtet**
-    gezählt (Kosten pro Schreibzugriff steigen mit dem Sprung, Cache-Line-Effekt;
-    Sättigung bei ~512). Der Gesamtaufwand wird **exakt** vorab berechnet
-    (identische Gewichtung → exakte Normierung).
-  - Die Schätzung wird **geglättet** (EMA).
-  - Ergebnis: Die Schätzung ist **sofort realistisch** – im Beispiel
-    `-r 10¹⁹ … -j 8` bei 10 % ca. **29 s** (tatsächlich 25,6 s) statt vorher
-    anfänglich 4 s.
-- **`-t`-Tabelle:** Berechnungszeit in **ms mit drei Nachkommastellen**.
-
-### Hinzugefügt
-- **Rotierender Trenner** in der Live-Zeile zwischen Thread- und RAM-Anzeige:
-  `|` → `/` → `-` → `\`.
+### Fixed
+- **Live line: wrong unit suffix.** The unit was hard-coded (`sec` for elapsed,
+  `min` for the extrapolated time), so e.g. 22 seconds appeared as
+  "00:00:22 min". The unit now follows the magnitude - for elapsed **and**
+  extrapolated time:
+  - `< 60 s` -> `sec`
+  - `< 1 h`  -> `min`
+  - otherwise -> `h`
 
 ---
 
-## [2.1.4] – 2026-10-05
+## [2.1.7] - 2026-10-06
 
-### Behoben
-- **Extrapolation erschien bei großem `high` / kleinem Bereich nie** (dauerhaft
-  nur Platzhalter): Ursache war, dass der **Basisprimzahl-Aufbau bis √(high)**
-  die Laufzeit dominierte (z. B. `-r 10¹⁹ 10¹⁹+1000`: Sieb bis ~3,16 Mrd.,
-  ~1,5 GB RAM, ~25 s), aber nicht in den Fortschritt einging – der Fortschritt
-  zählte nur die paar Bereichszahlen und blieb daher bei 0 %.
-  - Der Basisprimzahl-Aufbau wird jetzt in den Fortschritt **einbezogen**
-    (grobe Aufwandsschätzung der Streichungen; Summe über Primzahlen ≤ √r).
-  - Ergebnis: Die Extrapolation erscheint ab ~10 % und läuft bis 100 % durch.
-    Im Beispiel `-r 10¹⁹ … -j 8` konvergiert sie von anfänglich 4 s auf die
-    tatsächlichen **25 s**.
+### Fixed
+- **Misleading error message for oversized numbers** (e.g.
+  `-r 100000000000000000000 ...` -> "expects two numbers A B"): `parse_u64`
+  now distinguishes **overflow** (`ERANGE`, value > 2^64-1) from invalid input.
+  The message names the affected argument (range bound A/B, limit, count) and
+  the maximum value:
+  `Error: range bound A (-r) ... is too large (max. 18446744073709551615 = 2^64-1).`
 
----
-
-## [2.1.3] – 2026-10-05
-
-### Behoben
-- **Live-Zeile flackert nicht mehr:**
-  - Die Statuszeile wird nur noch **in-place überschrieben** (kein
-    `ESC[K`-Zeilenlöschen mehr) und bei kürzerem Text aufgefüllt.
-  - Die Primzahlausgabe wird im Konsolen-Streaming **gepuffert** und nur
-    noch ~10×/s (bzw. bei vollem Puffer) zusammen mit der Statuszeile
-    ausgegeben. Dadurch wird die Live-Zeile nicht mehr pro Primzahl neu
-    geschrieben.
-- **Extrapolation erscheint jetzt bei ca. 10 % der bearbeiteten Zahlen**
-  (nicht mehr erst kurz vor Ende): Das Sieb verwendet ein **adaptives
-  Segment** (Ziel ~256 Blöcke, 16 KiB–4 MiB) statt fester 4-MiB-Blöcke, und
-  der Fortschritt wird zusätzlich innerhalb des Scans fein fortgeschrieben.
-- **Tabellenzeiten (`-t`) realistisch:** Die einmalige Setup- und die
-  Markierzeit wird nicht mehr der ersten Primzahl zugeschrieben, sondern
-  proportional zur Kandidaten-Lücke auf die gefundenen Primzahlen verteilt.
-  Die Ausgabe-/Pufferzeit (`realloc`) wird nicht der nächsten Primzahl
-  zugerechnet.
-
-### Behoben (intern)
-- Regressionsfehler behoben: adaptives Segment konnte **ungerade** werden und
-  damit die Ausrichtung des odd-only-Siebs brechen (falsche Ergebnisse bei
-  einigen Single-Thread-Läufen). Segmentgröße wird nun gerade gehalten.
+### Added
+- **Feasibility check for the sieve method:** the estimated base-prime memory
+  (bitset + prime array per thread) is checked against available RAM before
+  starting. If exceeded, the program aborts with a clear estimate and
+  alternatives (`-m miller`/`-m trial`, reduce `-j`). `miller`/`trial` are not
+  affected.
+- **Help/docs:** documented the valid number range
+  `0 ... 18446744073709551615 (2^64-1)` and the recommendation for very large
+  numbers.
 
 ---
 
-## [2.1.2] – 2026-10-05
+## [2.1.6] - 2026-10-05
+
+### Fixed
+- **Live line:** the real time could overtake the extrapolated total duration
+  (e.g. `100% / 00:00:49 sec of 00:00:22 sec`). Cause: the estimate was only
+  recomputed at the 5% thresholds; if progress became slow near the end, no
+  threshold was reached and the estimate "froze".
+  - The expected duration is now additionally **corrected upward continuously**
+    (shown in red) so the elapsed time never exceeds the extrapolated duration.
+  - Verified: across two long runs (50 s and 27 s) there were **0 lines** with
+    `elapsed > expected`; the estimate converges to the real duration.
+
+---
+
+## [2.1.5] - 2026-10-05
+
+### Changed
+- **Duration estimate of the live line** greatly improved:
+  - The marking steps of the base-prime sieve are now counted **stride-weighted**
+    (cost per write grows with the stride, cache-line effect; saturation at
+    ~512). The total work is computed **exactly** in advance (identical
+    weighting -> exact normalization).
+  - The estimate is **smoothed** (EMA).
+  - Result: the estimate is **immediately realistic** - in the example
+    `-r 10^19 ... -j 8` about **29 s** at 10% (actual 25.6 s) instead of a
+    starting value of 4 s.
+- **`-t` table:** compute time in **ms with three decimal places**.
+
+### Added
+- **Rotating separator** in the live line between the thread and RAM display:
+  `|` -> `/` -> `-` -> `\`.
+
+---
+
+## [2.1.4] - 2026-10-05
+
+### Fixed
+- **Extrapolation never appeared for large `high` / small range** (only
+  placeholders): the **base-prime build up to sqrt(high)** dominated the
+  runtime (e.g. `-r 10^19 10^19+1000`: sieve up to ~3.16e9, ~1.5 GB RAM,
+  ~25 s) but was not part of the progress - progress only counted the few
+  range numbers and therefore stayed at 0%.
+  - The base-prime build is now **included** in the progress (rough estimate of
+    the marking work; sum over primes <= sqrt(r)).
+  - Result: the extrapolation appears from ~10% and runs through to 100%.
+    In the example `-r 10^19 ... -j 8` it converges from an initial 4 s to the
+    actual **25 s**.
+
+---
+
+## [2.1.3] - 2026-10-05
+
+### Fixed
+- **Live line no longer flickers:**
+  - The status line is now only **overwritten in place** (no more `ESC[K` line
+    clearing) and padded for shorter text.
+  - Prime output is **buffered** during console streaming and emitted only
+    ~10x/s (or when the buffer is full) together with the status line. The live
+    line is therefore no longer rewritten per prime.
+- **Extrapolation now appears at about 10% of the processed numbers** (no
+  longer only shortly before the end): the sieve uses an **adaptive segment**
+  (target ~256 blocks, 16 KiB-4 MiB) instead of fixed 4-MiB blocks, and the
+  progress is additionally updated finely within the scan.
+- **Table times (`-t`) realistic:** the one-time setup and marking time is no
+  longer charged to the first prime but distributed proportionally to the
+  candidate gap across the primes found. Output/buffer time (`realloc`) is not
+  charged to the next prime.
+
+### Fixed (internal)
+- Regression fixed: the adaptive segment could become **odd** and break the
+  odd-only sieve alignment (wrong results in some single-threaded runs). The
+  segment size is now kept even.
+
+---
+
+## [2.1.2] - 2026-10-05
 
 ### Hotfixes
-- **`-q`/`--quiet`** gibt jetzt **ausschließlich die Zusammenfassung** aus
-  (auf `stdout`) – sonst nichts: kein separater Anzahl-Wert, keine
-  Primzahlen, keine Live-Zeile.
-- **`-q` + `-t`** ist unzulässig; die Fehlermeldung erklärt das in **einem
-  Satz**.
-- Die **Extrapolation** der Live-Zeile wird **immer** angezeigt. Solange die
-  erste Extrapolation noch nicht erfolgt ist, werden **alle Zahlenpositionen
-  durch `-`** ersetzt: `--% / --:--:-- sek von --:--:-- min`.
-- Klargestellt/sichergestellt: Die Extrapolation beginnt bei ca. **10 % der in
-  den Threads bearbeiteten Zahlen** (Fortschrittszähler), **nicht** bei 10 %
-  der ausgegebenen Primzahlen.
+- **`-q`/`--quiet`** now outputs **only the summary** (on `stdout`) - nothing
+  else: no separate count value, no primes, no live line.
+- **`-q` + `-t`** is not allowed; the error message explains this in **one
+  sentence**.
+- The **extrapolation** of the live line is **always** shown. Until the first
+  extrapolation, **all number positions are replaced by `-`**:
+  `--% / --:--:-- sec of --:--:-- sec`.
+- Clarified/ensured: the extrapolation starts at about **10% of the numbers
+  processed in the threads** (progress counter), **not** at 10% of the emitted
+  primes.
 
 ---
 
-## [2.1.1] – 2026-10-05
+## [2.1.1] - 2026-10-05
 
-### Hinzugefügt
-- **Live-Zeile in allen Berechnungsarten** – sie erscheint jetzt immer, außer
-  bei `-q`/`--quiet`.
-- **Extrapolation des Fortschritts** in der Live-Zeile:
-  - Ab ca. **10 %** der zu testenden Zahlen wird am Ende angezeigt:
-    abgeschlossene **Prozent** (live), **verstrichene Zeit** (live) und die
-    **extrapolierte Gesamtdauer**. Format z. B.:
-    `13% / 00:00:39 sek von 00:05:00 min`
-  - Alle weiteren **5 %** wird die Gesamtdauer neu extrapoliert.
-  - Farbe der extrapolierten Dauer: **rot** (länger als zuvor), **grün**
-    (kürzer als zuvor), **weiß** (erste Extrapolation oder Abweichung ≤ 5 %).
+### Added
+- **Live line in all computation modes** - it now always appears, except with
+  `-q`/`--quiet`.
+- **Progress extrapolation** in the live line:
+  - From about **10%** of the numbers to be tested, the end shows: completed
+    **percent** (live), **elapsed time** (live) and the **extrapolated total
+    duration**. Format e.g.: `13% / 00:00:39 sec of 00:05:00 min`.
+  - Every further **5%** the total duration is re-extrapolated.
+  - Color of the extrapolated duration: **red** (longer than before), **green**
+    (shorter than before), **white** (first extrapolation or deviation <= 5%).
 
-### Behoben / Geändert
-- Die Live-Zeile zerstört die Primzahlen-Ausgabe nicht mehr: Vor jeder
-  Primzahlzeile wird die Statuszeile kurz entfernt und danach wieder
-  daruntergesetzt (Synchronisation zwischen Rechen- und Status-Thread).
-- Fortschrittsermittlung je Verfahren; Fehler in `trial`/`miller` behoben
-  (Fortschritt wurde nur ungerade fortgeschrieben).
+### Fixed / Changed
+- The live line no longer corrupts the prime output: before each prime line the
+  status line is briefly removed and placed underneath afterwards
+  (synchronization between the compute and status threads).
+- Progress tracking per method; fixed a bug in `trial`/`miller` (progress was
+  only advanced on odd steps).
 
 ---
 
-## [2.1.0] – 2026-10-05
+## [2.1.0] - 2026-10-05
 
-### Hinzugefügt
-- **Farbcodierte Threads** (ANSI 256):
-  - Bei Multithreading erhält jeder Thread eine im Farbraum **möglichst weit
-    entfernte** Farbe; die **16 Grautöne sind ausgeschlossen**.
-  - Sonderfall: Bei nur **einem Thread** ist die Farbe **weiß**.
-  - In der **Live-Zeile** werden Thread-Label und -Wert in der jeweiligen
-    Farbe dargestellt.
-  - In der **`-t`-Tabelle** werden die **vertikalen Balken** jeder Zeile in
-    der Farbe des Threads gezeichnet, der den Wert berechnet hat.
-- Farben werden auf echten Konsolen automatisch aktiviert; zum Erzwingen
-  (z. B. bei Umleitung) dient `PRIMES_COLOR=1`.
+### Added
+- **Color-coded threads** (ANSI 256):
+  - With multithreading, each thread gets a color **as far apart as possible**
+    in the color space; the **16 grayscale tones are excluded**.
+  - Special case: with only **one thread**, the color is **white**.
+  - In the **live line**, the thread label and value are shown in the
+    respective color.
+  - In the **`-t` table**, the **vertical bars** of each row are drawn in the
+    color of the thread that computed the value.
+- Colors are enabled automatically on real consoles; `PRIMES_COLOR=1` forces
+  them (e.g. when redirecting).
 
 ### Hotfixes
-- **`-p`/`--per-prime` entfernt** (durch die `-t`-Tabelle redundant).
-- Die **Zusammenfassung** (Anzahl/Zeit/Verfahren/Threads) wird jetzt **immer**
-  ausgegeben, nicht mehr nur bei `-t`.
-- **Live-Zeile springt nicht mehr**: Thread-Label, `=` und Prozentwerte haben
-  feste Spaltenbreiten, sodass `=` und `:` an fixen Positionen stehen.
+- **`-p`/`--per-prime` removed** (redundant due to the `-t` table).
+- The **summary** (count/time/method/threads) is now **always** printed, no
+  longer only with `-t`.
+- **Live line no longer jumps**: thread label, `=` and percentage values have
+  fixed column widths so `=` and `:` stay at fixed positions.
 
-### Geändert
-- `-t` und `-q` schließen sich weiterhin aus (jetzt die einzige
-  Ausschlusskombination).
-
----
-
-## [2.0.1] – 2026-10-05
-
-### Hinzugefügt
-- **Versionsschema** (Rewrite/Features/Hotfixes) eingeführt und dokumentiert.
-- **`-t`/`--time`** gibt die Ergebnisse jetzt als **ASCII-Tabelle** mit den
-  Spalten `Primzahl` und `Berechnungszeit` aus.
-- Die Spalte `Berechnungszeit` zeigt die Zeiten in **Millisekunden inkl.
-  Einheitenkürzel `ms`**.
-- **Live-Fortschrittszeile** während der Berechnung (auf `stderr`, via
-  Wagenrücklauf): **CPU-Auslastung je genutztem Thread** und **RAM-Verbrauch**
-  des Programms.
-- Diese `changelog.md` als laufender Changelog (rückwirkend ab 1.0.0).
-
-### Geändert
-- `-t` erzeugt keine reine Zusammenfassung mehr, sondern die Tabelle;
-  die Zusammenfassung erscheint zusätzlich auf `stderr`.
-- `-q`/`--quiet` schließt `-t` und `-p` aus.
-- `-p`/`--per-prime` gibt die Dauer mit Einheit an (`ms`).
-
-### Behoben / Optimiert
-- Multithreading im Nur-Zählen-Modus (`-q`) puffert keine Primzahlen mehr:
-  RAM bei `-m sieve -j 4 -q 1000000000` von ~334 MB auf ~12 MB reduziert.
+### Changed
+- `-t` and `-q` remain mutually exclusive (now the only exclusion combination).
 
 ---
 
-## [2.0.0] – 2026-10-05
+## [2.0.1] - 2026-10-05
 
-### Hinzugefügt
-- Auswahl verschiedener **mathematischer Verfahren** über `-m`/`--method`:
-  - `sieve` – Segmentiertes Sieb des Eratosthenes (**Standard**)
-  - `atkin` – Sieb des Atkin
-  - `sundaram` – Sieb des Sundaram
-  - `trial` – Probedivision (6k ± 1)
-  - `miller` – Miller-Rabin (deterministisch für 64 Bit)
-- `-p`/`--per-prime`: Anzeige der Berechnungsdauer jeder einzelnen Primzahl
-  in Millisekunden (in 2.1.0 entfernt).
-- **Multithreading** über `-j`/`--threads N` bzw. `--mt` (alle CPU-Kerne);
-  deterministische, aufsteigende Ausgabe.
-- Speicher-Schutzprüfung für vollständige Siebe (Atkin/Sundaram) mit klarer
-  Fehlermeldung statt hängendem System.
+### Added
+- **Versioning scheme** (rewrite/features/hotfixes) introduced and documented.
+- **`-t`/`--time`** now prints the results as an **ASCII table** with the
+  columns `Prime` and `Compute time`.
+- The `Compute time` column shows the times in **milliseconds including the
+  unit suffix `ms`**.
+- **Live progress line** during the computation (on `stderr`, via carriage
+  return): **CPU load per used thread** and **RAM usage** of the program.
+- This `changelog.md` as a continuously maintained changelog (retroactively
+  from 1.0.0).
 
-### Geändert
-- Vollständige Neuimplementierung des Quellcodes (einheitliche
-  Methoden-Schnittstelle, Threading, exakte Arithmetik via `_umul128`/
-  `_udiv128`).
+### Changed
+- `-t` no longer produces a plain summary but the table; the summary appears
+  additionally on `stderr`.
+- `-q`/`--quiet` excludes `-t` and `-p`.
+- `-p`/`--per-prime` prints the duration with a unit (`ms`).
 
-### Verifikation
-- Alle Verfahren liefern bit-identische Ergebnisse.
-- `π(10⁶) = 78498`, `π(10⁸) = 5761455`, 100000. Primzahl = 1299709,
-  `π([10¹², 10¹²+10⁶]) = 36249`.
-- Skalierung `sieve` bis 10⁹: 1 Thread 0.92 s → 4 Threads 0.42 s → auto 0.25 s.
+### Fixed / Optimized
+- Multithreading in count-only mode (`-q`) no longer buffers primes: RAM for
+  `-m sieve -j 4 -q 1000000000` reduced from ~334 MB to ~12 MB.
 
 ---
 
-## [1.0.0] – 2026-10-05
+## [2.0.0] - 2026-10-05
 
-### Hinzugefügt
-- Erstveröffentlichung: schlanke Windows-x64-Kommandozeilenanwendung.
-- Segmentiertes Sieb des Eratosthenes (odd-only, speicherschonend).
-- Modi: Obergrenze (`<N>`), erste N (`-c`), Bereich (`-r`).
-- `-q`/`--quiet` (nur Anzahl), `-t`/`--time` (Laufzeit/Anzahl auf `stderr`),
+### Added
+- Selection of various **mathematical methods** via `-m`/`--method`:
+  - `sieve` - segmented sieve of Eratosthenes (**default**)
+  - `atkin` - sieve of Atkin
+  - `sundaram` - sieve of Sundaram
+  - `trial` - trial division (6k +/- 1)
+  - `miller` - Miller-Rabin (deterministic for 64-bit)
+- `-p`/`--per-prime`: display of the computation time of each individual prime
+  in milliseconds (removed in 2.1.0).
+- **Multithreading** via `-j`/`--threads N` or `--mt` (all CPU cores);
+  deterministic, ascending output.
+- Memory guard for full sieves (Atkin/Sundaram) with a clear error message
+  instead of a hanging system.
+
+### Changed
+- Complete reimplementation of the source code (uniform method interface,
+  threading, exact arithmetic via `_umul128`/`_udiv128`).
+
+### Verification
+- All methods produce bit-identical results.
+- `π(10^6) = 78498`, `π(10^8) = 5761455`, 100000th prime = 1299709,
+  `π([10^12, 10^12+10^6]) = 36249`.
+- Scaling of `sieve` up to 10^9: 1 thread 0.92 s -> 4 threads 0.42 s -> auto
+  0.25 s.
+
+---
+
+## [1.0.0] - 2026-10-05
+
+### Added
+- Initial release: slim Windows x64 command-line application.
+- Segmented sieve of Eratosthenes (odd-only, memory-efficient).
+- Modes: upper bound (`<N>`), first N (`-c`), range (`-r`).
+- `-q`/`--quiet` (count only), `-t`/`--time` (runtime/count on `stderr`),
   `-h`/`--help`, `-v`/`--version`.
-- Statisch gelinkte CRT (`/MT`), einzige DLL-Abhängigkeit `KERNEL32.dll`,
-  EXE ca. 149 KB.
+- Statically linked CRT (`/MT`), only DLL dependency `KERNEL32.dll`,
+  EXE about 149 KB.

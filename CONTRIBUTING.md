@@ -1,39 +1,42 @@
 # Contributing
 
-Danke für dein Interesse an **GPrimes64**!
+Thanks for your interest in **GPrimes64**!
 
 ## Build (Windows x64)
-Voraussetzung: Visual Studio 2022 **Build Tools** mit C++-Workload (MSVC + Windows SDK).
+Prerequisite: Visual Studio 2022 **Build Tools** with the C++ workload
+(MSVC + Windows SDK).
 
 ```bat
 build.bat
 ```
 
-Erzeugt `primes.exe` im Projektverzeichnis. Der Build ist statisch (`/MT`) und
-hängt nur von `KERNEL32.dll` ab.
+This produces `gprimes64.exe` in the project directory. The build is static
+(`/MT`) and depends only on `KERNEL32.dll`.
 
 ## Tests
-Es gibt keinen Test-Runner; bitte nach Änderungen die Smoke-Tests ausführen:
+There is no test runner; after changes, please run the smoke tests:
 
 ```bat
-primes.exe -q 1000000
-primes.exe -m miller -q 1000000
-primes.exe -c 100
-primes.exe -r 1000000000000 1000001000000
+gprimes64.exe -q 1000000
+gprimes64.exe -m miller -q 1000000
+gprimes64.exe -c 100
+gprimes64.exe -r 1000000000000 1000001000000
 ```
 
-Bekannte Referenzwerte: `π(10^6) = 78498`, `π(10^8) = 5761455`,
-100000. Primzahl = 1299709.
+Known reference values: `π(10^6) = 78498`, `π(10^8) = 5761455`,
+100000th prime = 1299709.
 
-## Pull Requests
-1. Feature-Branch anlegen (`git checkout -b feature/xyz`).
-2. Änderungen committen (klare, beschreibende Commit-Messages).
-3. `build.bat` ausführen und die Smoke-Tests prüfen.
-4. Pull Request gegen `main` stellen; die CI (`.github/workflows/build.yml`) muss grün sein.
+## Pull requests
+1. Create a feature branch (`git checkout -b feature/xyz`).
+2. Commit your changes (clear, descriptive commit messages).
+3. Run `build.bat` and check the smoke tests.
+4. Open a pull request against `main`; the CI
+   (`.github/workflows/build.yml`) must be green.
 
-## Stil
-- Reines C (C11), keine externen Bibliotheken außer der Windows-API.
-- Bestehenden Stil/Struktur beibehalten (Kommentare auf Deutsch).
-- Versionsschema (`primes.c`, `PRIMES_VERSION`) beachten:
-  1. Stelle = Rewrite, 2. Stelle = Features, 3. Stelle = Hotfixes.
-- `changelog.md` pflegen.
+## Style
+- Pure C (C11), no external libraries other than the Windows API.
+- Keep the existing style/structure. The project language is **English**
+  (code comments and all user-facing texts).
+- Respect the versioning scheme (`primes.c`, `PRIMES_VERSION`):
+  1st = rewrite, 2nd = features, 3rd = hotfixes.
+- Maintain `changelog.md`.

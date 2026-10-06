@@ -1,36 +1,37 @@
 /*
- * primes.c - schlanke Primzahlberechnung fuer Windows x64
+ * primes.c - GPrimes64, slim prime generator for Windows x64
  * ==================================================================
- * Eine einzelne native EXE, reines C (C11), keine externen Libs
- * ausser der Windows-API (KERNEL32).
+ * A single native EXE, pure C (C11), no external libraries other
+ * than the Windows API (KERNEL32).
  *
- * Verfahren (per -m/--method waehlbar):
- *   sieve     Segmentiertes Sieb des Eratosthenes (Standard)
- *   atkin     Sieb des Atkin
- *   sundaram  Sieb des Sundaram
- *   trial     Probedivision (6k +/- 1)
- *   miller    Miller-Rabin (deterministisch fuer 64 Bit)
+ * Methods (selectable via -m/--method):
+ *   sieve     Segmented sieve of Eratosthenes (default)
+ *   atkin     Sieve of Atkin
+ *   sundaram  Sieve of Sundaram
+ *   trial     Trial division (6k +/- 1)
+ *   miller    Miller-Rabin (deterministic for 64-bit)
  *
- * Ausgabe:
- *   -t/--time       ASCII-Tabelle: Primzahl | Berechnungszeit (ms)
- *   -j/--threads N  Multithreading (0/--mt = alle Kerne)
- *   -q/--quiet      Nur die Anzahl (unterdrueckt die Live-Zeile)
- *   Immer: Zusammenfassung auf stderr.
+ * Output:
+ *   -t/--time       ASCII table: prime | compute time (ms)
+ *   -j/--threads N  Multithreading (0/--mt = all cores)
+ *   -q/--quiet      Only the summary (suppresses the live line)
+ *   Always: summary on stderr.
  *
- * Live-Zeile (stderr): CPU je Thread (farbcodiert) + RAM. Ab ca. 10 %
- *   Fortschritt zusaetzlich: Prozent / verstrichene Zeit / extrapolierte
- *   Gesamtdauer. Die Extrapolation wird alle 5 % neu berechnet und je nach
- *   Tendenz rot (> vorher), gruen (< vorher) oder weiss (erste/±5 %) gefaerbt.
+ * Live line (stderr): CPU per thread (color-coded) + RAM. From about 10%
+ *   progress additionally: percent / elapsed time / extrapolated total
+ *   duration. The extrapolation is recomputed every 5% and colored
+ *   according to the trend: red (> previous), green (< previous) or
+ *   white (first / within +/-5%).
  *
- * Farbcodierte Threads (ANSI 256):
- *   Jeder Thread erhaelt eine moeglichst weit entfernte Farbe; Grautoene
- *   sind ausgeschlossen. Ein einzelner Thread ist weiss. In der Live-Zeile
- *   sind Label/Wert, in der Tabelle die vertikalen Balken eingefaerbt.
+ * Color-coded threads (ANSI 256):
+ *   Each thread gets a color as far apart as possible; grayscale tones
+ *   are excluded. A single thread is white. In the live line the
+ *   label/value, in the table the vertical bars are colored.
  *
- * Versionierung:  X.Y.Z
- *   X = kompletter Code-Rewrite, Y = Hauptfeatures, Z = Hotfixes
+ * Versioning: X.Y.Z
+ *   X = full code rewrite, Y = major features, Z = hotfixes
  *
- * Build: siehe build.bat
+ * Build: see build.bat
  */
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -51,22 +52,22 @@
 typedef uint64_t u64;
 typedef uint8_t  u8;
 
-#define PRIMES_VERSION "2.1.8"
+#define PRIMES_VERSION "3.0.0"
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
 #endif
 
-/* Extrapolationsfarben (ANSI 256) */
+/* Extrapolation colors (ANSI 256) */
 #define COL_RED   196
 #define COL_GREEN  46
 #define COL_WHITE  15
 
-/* Tabellenfarben nur auf einer echten Konsole (oder per PRIMES_COLOR=1). */
+/* Table colors only on a real console (or via PRIMES_COLOR=1). */
 static int g_table_color = 0;
 
 /* ==================================================================
- *  Zeitmessung (hochaufloesend)
+ *  Timing (high resolution)
  * ================================================================== */
 static double qpc_ms(void)
 {
@@ -89,16 +90,16 @@ static void fmt_hms(double sec, char *buf, size_t n)
              (unsigned long long)(s % 60));
 }
 
-/* Einheitenkürzel passend zur Größenordnung. */
+/* Unit suffix matching the magnitude. */
 static const char *time_unit(double sec)
 {
-    if (sec < 60.0)   return "sek";
+    if (sec < 60.0)   return "sec";
     if (sec < 3600.0) return "min";
-    return "std";
+    return "h";
 }
 
 /* ==================================================================
- *  ANSI-256-Farben fuer Threads
+ *  ANSI 256 colors for threads
  * ================================================================== */
 static const int LVL[6] = { 0, 95, 135, 175, 215, 255 };
 
@@ -112,7 +113,7 @@ static void build_candidates(void)
     int n = 0;
     for (int i = 0; i < 216; i++) {
         int r = i / 36, g = (i / 6) % 6, b = i % 6;
-        if (r == g && g == b) continue;          /* Grauton -> verboten */
+        if (r == g && g == b) continue;          /* grayscale -> forbidden */
         g_cand[n].idx = 16 + i;
         g_cand[n].r = LVL[r]; g_cand[n].g = LVL[g]; g_cand[n].b = LVL[b];
         n++;
@@ -129,7 +130,7 @@ static int dist2(const Cand *a, const Cand *b)
 static void assign_thread_colors(int n, u8 *colors)
 {
     if (n <= 0) return;
-    if (n == 1) { colors[0] = COL_WHITE; return; }   /* Ausnahme: weiss */
+    if (n == 1) { colors[0] = COL_WHITE; return; }   /* exception: white */
 
     build_candidates();
     int m = g_ncand;
@@ -166,19 +167,19 @@ static void assign_thread_colors(int n, u8 *colors)
 }
 
 /* ==================================================================
- *  Statuszeile (Live-Zeile) - von Monitor und Ausgabe gemeinsam genutzt
+ *  Status line (live line) - shared by monitor and output
  * ================================================================== */
 static CRITICAL_SECTION g_status_cs;
-static int  g_status_coord = 0;      /* Ausgabe muss Statuszeile schonen   */
+static int  g_status_coord = 0;      /* output must preserve the status line */
 static char g_status_line[8192];
-static int  g_status_len   = 0;      /* Inhalt in g_status_line (Bytes)    */
-static int  g_status_drawn = 0;      /* zuletzt geschriebene Zeichen       */
-static char g_outbuf[262144];        /* gepufferte Primzahl-Ausgabe        */
+static int  g_status_len   = 0;      /* content in g_status_line (bytes)     */
+static int  g_status_drawn = 0;      /* last written character count         */
+static char g_outbuf[262144];        /* buffered prime output                */
 static int  g_outlen = 0;
 
-/* Gepufferte Ausgabe leeren. Die Statuszeile wird dabei kurz entfernt und
- * (optional) wieder gesetzt. Wird nur ~10x/s bzw. bei vollem Puffer genutzt,
- * damit die Live-Zeile nicht flackert. */
+/* Flush the buffered output. The status line is briefly removed and
+ * (optionally) restored. Used only ~10x/s or when the buffer is full so the
+ * live line does not flicker. */
 static void out_flush(int reprint_status)
 {
     if (g_outlen > 0) {
@@ -194,9 +195,8 @@ static void out_flush(int reprint_status)
     }
 }
 
-/* Statuszeile in-place schreiben (CS wird vom Aufrufer gehalten).
- * Kein Zeilenloeschen: nur ueberschreiben und bei kuerzerem Text auffuellen
- * -> kein Flackern. */
+/* Write the status line in place (the caller holds the CS).
+ * No line clearing: only overwrite and pad for shorter text -> no flicker. */
 static void status_render(const char *line, int len)
 {
     fputc('\r', stderr);
@@ -206,7 +206,7 @@ static void status_render(const char *line, int len)
     fflush(stderr);
 }
 
-/* Statuszeile entfernen und Puffer leeren. */
+/* Remove the status line and flush the buffer. */
 static void status_finish(void)
 {
     EnterCriticalSection(&g_status_cs);
@@ -222,7 +222,7 @@ static void status_finish(void)
     LeaveCriticalSection(&g_status_cs);
 }
 
-/* Primzahlzeile puffern; die Ausgabe erfolgt gebuendelt in out_flush(). */
+/* Buffer a prime line; the actual output happens batched in out_flush(). */
 static void print_prime(u64 p)
 {
     if (!g_status_coord) {
@@ -238,7 +238,7 @@ static void print_prime(u64 p)
 }
 
 /* ==================================================================
- *  Gemeinsame Hilfsfunktionen
+ *  Common helpers
  * ================================================================== */
 static u64 isqrt_u64(u64 n)
 {
@@ -264,10 +264,10 @@ static void check_sieve_size(u64 high, const char *method, size_t nbytes)
 {
     if (nbytes > MAX_SIEVE_BYTES) {
         fprintf(stderr,
-            "Fehler: Verfahren '%s' benoetigt ein Sieb bis %llu (%llu MB) "
-            "und uebersteigt das Limit von %llu MB.\n"
-            "        Fuer grosse Obergrenzen oder Bereiche bitte "
-            "-m sieve, -m trial oder -m miller verwenden.\n",
+            "Error: method '%s' requires a sieve up to %llu (%llu MB) "
+            "and exceeds the limit of %llu MB.\n"
+            "       For large upper bounds or ranges use "
+            "-m sieve, -m trial or -m miller.\n",
             method, (unsigned long long)high,
             (unsigned long long)(nbytes >> 20),
             (unsigned long long)(MAX_SIEVE_BYTES >> 20));
@@ -276,17 +276,17 @@ static void check_sieve_size(u64 high, const char *method, size_t nbytes)
 }
 
 /* ==================================================================
- *  Ausgabe-Stream
+ *  Output stream
  * ================================================================== */
-typedef int (*EmitFn)(u64 prime, void *ctx);   /* Rueckgabe != 0 => Abbruch */
+typedef int (*EmitFn)(u64 prime, void *ctx);   /* return != 0 => abort */
 
 typedef struct {
-    int    print;        /* Primzahlen direkt ausgeben                    */
-    int    measure;      /* Dauer je Primzahl messen (fuer Tabelle)       */
-    int    table;        /* Ergebnisse als ASCII-Tabelle ausgeben         */
-    int    buffered;     /* Worker-Puffer (Multithreading)                */
-    int    count_only;   /* nur zaehlen, keine Primzahlen puffern         */
-    u64    stop_at;      /* nach so vielen Treffern stoppen (0 = aus)     */
+    int    print;        /* output primes directly                        */
+    int    measure;      /* measure per-prime time (for the table)        */
+    int    table;        /* output results as an ASCII table              */
+    int    buffered;     /* worker buffer (multithreading)                */
+    int    count_only;   /* count only, do not buffer primes              */
+    u64    stop_at;      /* stop after this many hits (0 = off)           */
     u64    found;
     double last_ms;
     u8     cur_color;
@@ -294,10 +294,10 @@ typedef struct {
     double *bt;
     u8     *bc;
     size_t  len, cap;
-    /* Fortschritt fuer die Live-Zeile */
+    /* progress for the live line */
     u64          prog_span;
     volatile u64 prog_done;
-    double       pending_extra;   /* Markier-Anteil fuer die naechste Primzahl */
+    double       pending_extra;   /* marking share for the next prime */
 } StreamCtx;
 
 static void buf_push(StreamCtx *s, u64 p, double ms)
@@ -310,7 +310,7 @@ static void buf_push(StreamCtx *s, u64 p, double ms)
         if (s->measure) nt = (double *)realloc(s->bt, nc * sizeof(double));
         if (s->table)   nb = (u8 *)realloc(s->bc, nc * sizeof(u8));
         if (!np || (s->measure && !nt) || (s->table && !nb)) {
-            fprintf(stderr, "Fehler: Nicht genug Speicher.\n");
+            fprintf(stderr, "Error: out of memory.\n");
             exit(1);
         }
         s->bp = np; s->bt = nt; s->bc = nb; s->cap = nc;
@@ -349,13 +349,13 @@ static int stream_emit(u64 p, void *ctx)
     } else {
         r = emit_final(p, ms, s);
     }
-    /* Ausgabe-/Pufferzeit (z. B. realloc) nicht der naechsten Primzahl zurechnen. */
+    /* Do not charge output/buffer time (e.g. realloc) to the next prime. */
     if (s->measure) s->last_ms = qpc_ms();
     return r;
 }
 
 /* ==================================================================
- *  ASCII-Tabelle: Primzahl | Berechnungszeit (Balken farbig)
+ *  ASCII table: prime | compute time (colored bars)
  * ================================================================== */
 static int digit_count(u64 v) { int d = 1; while (v >= 10) { v /= 10; d++; } return d; }
 
@@ -371,8 +371,8 @@ static void print_rule(int w1, int w2)
 
 static void print_table(const StreamCtx *s)
 {
-    const char *h1 = "Primzahl";
-    const char *h2 = "Berechnungszeit";
+    const char *h1 = "Prime";
+    const char *h2 = "Compute time";
     int w1 = (int)strlen(h1);
     int w2 = (int)strlen(h2);
     char b[64];
@@ -404,15 +404,15 @@ static void print_table(const StreamCtx *s)
 }
 
 /* ==================================================================
- *  Verfahren 1: Segmentiertes Sieb des Eratosthenes (Standard)
+ *  Method 1: segmented sieve of Eratosthenes (default)
  * ================================================================== */
 typedef struct { u8 *bits; size_t n; } Sieve;
 
 static int  sb_test (const Sieve *s, size_t k) { return (s->bits[k >> 3] >> (k & 7)) & 1; }
 static void sb_clear(      Sieve *s, size_t k) { s->bits[k >> 3] &= (u8)~(1u << (k & 7)); }
 
-/* Stride-Gewicht eines Streichschritts: die Kosten eines Schreibzugriffs
- * wachsen mit dem Sprung (Cache-Line-Effekt) und sättigen bei ~512 (64 Byte). */
+/* Stride weight of a marking step: the cost of a write grows with the stride
+ * (cache-line effect) and saturates at ~512 (64 bytes). */
 static u64 stride_weight(u64 p) { return (p < 512) ? p : 512; }
 
 static Sieve sieve_build(u64 limit, StreamCtx *sc, u64 prog_cap)
@@ -423,11 +423,11 @@ static Sieve sieve_build(u64 limit, StreamCtx *sc, u64 prog_cap)
     size_t bytes = (n + 7) / 8;
     s.bits = (u8 *)malloc(bytes);
     s.n = n;
-    if (!s.bits) { fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!s.bits) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
     memset(s.bits, 0xFF, bytes);
     if (n & 7) s.bits[bytes - 1] &= (u8)((1u << (n & 7)) - 1);
 
-    u64 work = 0;                    /* stride-gewichtete Streicharbeit */
+    u64 work = 0;                    /* stride-weighted marking work */
     for (size_t k = 0; k < n; k++) {
         u64 p = 2 * (u64)k + 3;
         if (p > limit / p) break;
@@ -454,7 +454,7 @@ static u64 *sieve_primes(const Sieve *s, u64 limit, size_t *cnt_out)
     size_t cnt = limit >= 2 ? 1 : 0;
     for (size_t k = 0; k < s->n; k++) if (sb_test(s, k)) cnt++;
     u64 *arr = (u64 *)malloc((cnt ? cnt : 1) * sizeof(u64));
-    if (!arr) { fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!arr) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
     size_t i = 0;
     if (limit >= 2) arr[i++] = 2;
     for (size_t k = 0; k < s->n; k++) if (sb_test(s, k)) arr[i++] = 2 * (u64)k + 3;
@@ -462,8 +462,8 @@ static u64 *sieve_primes(const Sieve *s, u64 limit, size_t *cnt_out)
     return arr;
 }
 
-/* Exakter, stride-gewichteter Gesamtaufwand des Basisprimzahl-Siebs bis
- * sqrt(root) (identische Gewichtung wie in sieve_build -> exakte Normierung). */
+/* Exact, stride-weighted total work of the base-prime sieve up to sqrt(root)
+ * (identical weighting as in sieve_build -> exact normalization). */
 static u64 base_work_total(u64 root)
 {
     if (root < 9) return 0;
@@ -501,9 +501,9 @@ static void method_eratosthenes(u64 low, u64 high, EmitFn emit, void *ctx)
     u64 root = isqrt_u64(high);
     u64 range = high - low + 1;
 
-    /* Der Basisprimzahl-Aufbau (Sieb bis sqrt(high)) dominiert bei grossem
-     * high und kleinem Bereich die Laufzeit. Sein stride-gewichteter Aufwand
-     * wird exakt berechnet und als Fortschrittsbasis verwendet. */
+    /* Building the base primes (sieve up to sqrt(high)) dominates the runtime
+     * for large high and a small range. Its stride-weighted work is computed
+     * exactly and used as the progress baseline. */
     u64 prog_cap = base_work_total(root);
     sc->prog_span = prog_cap + range;
 
@@ -515,17 +515,17 @@ static void method_eratosthenes(u64 low, u64 high, EmitFn emit, void *ctx)
     }
     sc->prog_done = prog_cap;
 
-    /* Adaptives Segment: viele kleine Bloecke fuer feinen Fortschritt,
-     * aber nicht zu klein (Overhead der Basisprimzahlen). */
+    /* Adaptive segment: many small blocks for fine progress, but not too
+     * small (overhead of the base primes). */
     u64 SEG = range / 256;
     if (SEG < ((u64)1 << 14)) SEG = (u64)1 << 14;
     if (SEG > ((u64)1 << 22)) SEG = (u64)1 << 22;
     if (SEG < 2) SEG = 2;
-    if (SEG & 1) SEG++;              /* gerade halten: segLow bleibt ungerade */
+    if (SEG & 1) SEG++;              /* keep even: segLow stays odd */
 
     size_t cap = (size_t)(SEG / 2) + 2;
     u8 *flags = (u8 *)malloc(cap);
-    if (!flags) { free(bp); fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!flags) { free(bp); fprintf(stderr, "Error: out of memory.\n"); exit(1); }
 
     for (u64 segLow = start; segLow <= high; segLow += SEG) {
         u64 segHigh = segLow + SEG - 1;
@@ -546,9 +546,9 @@ static void method_eratosthenes(u64 low, u64 high, EmitFn emit, void *ctx)
         }
         double mark_ms = sc->measure ? (qpc_ms() - mark_t0) : 0.0;
 
-        /* Scan-Zeitmessung ohne das (gebueschelte) Markieren starten und
-         * die Markierzeit proportional zur Kandidaten-Luecke auf die
-         * gefundenen Primzahlen verteilen. */
+        /* Start scan-time measurement without the (batched) marking and
+         * distribute the marking time proportionally to the candidate gap
+         * across the primes found. */
         u64 seg_span = segHigh - segLow + 1;
         u64 prev = segLow;
         if (sc->measure) sc->last_ms = qpc_ms();
@@ -571,7 +571,7 @@ static void method_eratosthenes(u64 low, u64 high, EmitFn emit, void *ctx)
 }
 
 /* ==================================================================
- *  Verfahren 2: Sieb des Atkin (Fortschritt grob gewichtet)
+ *  Method 2: sieve of Atkin (progress roughly weighted)
  * ================================================================== */
 static void method_atkin(u64 low, u64 high, EmitFn emit, void *ctx)
 {
@@ -579,13 +579,13 @@ static void method_atkin(u64 low, u64 high, EmitFn emit, void *ctx)
     sc->prog_span = high + 1;
     sc->prog_done = 0;
     if (high < 2 || low > high) return;
-    if (high > ((u64)1 << 58)) { fprintf(stderr, "Fehler: Atkin-Obergrenze zu gross.\n"); exit(1); }
+    if (high > ((u64)1 << 58)) { fprintf(stderr, "Error: Atkin upper bound too large.\n"); exit(1); }
 
     u64 lim = high;
     size_t nbytes = (size_t)((lim + 8) / 8);
     check_sieve_size(high, "atkin", nbytes);
     u8 *b = (u8 *)calloc(nbytes, 1);
-    if (!b) { fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!b) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
 
     u64 root = isqrt_u64(lim);
     double span = (double)(high + 1);
@@ -622,7 +622,7 @@ static void method_atkin(u64 low, u64 high, EmitFn emit, void *ctx)
 }
 
 /* ==================================================================
- *  Verfahren 3: Sieb des Sundaram (Fortschritt grob gewichtet)
+ *  Method 3: sieve of Sundaram (progress roughly weighted)
  * ================================================================== */
 static void method_sundaram(u64 low, u64 high, EmitFn emit, void *ctx)
 {
@@ -637,7 +637,7 @@ static void method_sundaram(u64 low, u64 high, EmitFn emit, void *ctx)
     size_t nbytes = (size_t)((maxn + 8) / 8);
     check_sieve_size(high, "sundaram", nbytes);
     u8 *b = (u8 *)calloc(nbytes, 1);
-    if (!b) { fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!b) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
 
     double span = (double)(high + 1);
     u64 imax = isqrt_u64(maxn / 2) + 1;
@@ -667,7 +667,7 @@ static void method_sundaram(u64 low, u64 high, EmitFn emit, void *ctx)
 }
 
 /* ==================================================================
- *  Verfahren 4: Probedivision (6k +/- 1)
+ *  Method 4: trial division (6k +/- 1)
  * ================================================================== */
 static int is_prime_trial(u64 n)
 {
@@ -698,7 +698,7 @@ static void method_trial(u64 low, u64 high, EmitFn emit, void *ctx)
 }
 
 /* ==================================================================
- *  Verfahren 5: Miller-Rabin (deterministisch fuer u64)
+ *  Method 5: Miller-Rabin (deterministic for u64)
  * ================================================================== */
 static u64 mulmod(u64 a, u64 b, u64 m)
 {
@@ -757,17 +757,17 @@ static void method_miller(u64 low, u64 high, EmitFn emit, void *ctx)
 }
 
 /* ==================================================================
- *  Methodenauswahl
+ *  Method selection
  * ================================================================== */
 typedef void (*MethodFn)(u64 low, u64 high, EmitFn emit, void *ctx);
 typedef struct { const char *name; const char *alias; MethodFn fn; const char *desc; } MethodDef;
 
 static const MethodDef METHODS[] = {
-    { "sieve",    "eratosthenes", method_eratosthenes, "Segmentiertes Sieb des Eratosthenes (Standard)" },
-    { "atkin",    NULL,           method_atkin,        "Sieb des Atkin" },
-    { "sundaram", NULL,           method_sundaram,     "Sieb des Sundaram" },
-    { "trial",    "probe",        method_trial,        "Probedivision (6k +/- 1)" },
-    { "miller",   "millerrabin",  method_miller,       "Miller-Rabin (deterministisch, 64 Bit)" },
+    { "sieve",    "eratosthenes", method_eratosthenes, "Segmented sieve of Eratosthenes (default)" },
+    { "atkin",    NULL,           method_atkin,        "Sieve of Atkin" },
+    { "sundaram", NULL,           method_sundaram,     "Sieve of Sundaram" },
+    { "trial",    "probe",        method_trial,        "Trial division (6k +/- 1)" },
+    { "miller",   "millerrabin",  method_miller,       "Miller-Rabin (deterministic, 64-bit)" },
 };
 static const size_t NMETHODS = sizeof(METHODS) / sizeof(METHODS[0]);
 
@@ -783,17 +783,17 @@ static MethodFn resolve_method(const char *name, int *ok)
 
 static void list_methods(FILE *out)
 {
-    fprintf(out, "Verfuegbare Verfahren (-m/--method):\n");
+    fprintf(out, "Available methods (-m/--method):\n");
     for (size_t i = 0; i < NMETHODS; i++) {
         fprintf(out, "  %-9s %s", METHODS[i].name, METHODS[i].desc);
-        if (METHODS[i].alias) fprintf(out, " (Alias: %s)", METHODS[i].alias);
-        if (i == 0) fprintf(out, "  [Standard]");
+        if (METHODS[i].alias) fprintf(out, " (alias: %s)", METHODS[i].alias);
+        if (i == 0) fprintf(out, "  [default]");
         fputc('\n', out);
     }
 }
 
 /* ==================================================================
- *  Live-Fortschritt: CPU je Thread + RAM + Extrapolation
+ *  Live progress: CPU per thread + RAM + extrapolation
  * ================================================================== */
 typedef struct {
     volatile LONG  stop;
@@ -803,9 +803,9 @@ typedef struct {
     int            n;
     int            enabled;
     double         start_ms;
-    double         last_expected;   /* ms, 0 = noch keine Extrapolation */
+    double         last_expected;   /* ms, 0 = no extrapolation yet */
     int            last_color;
-    double         next_pct;        /* naechste Schwelle in Prozent     */
+    double         next_pct;        /* next threshold in percent    */
 } Monitor;
 
 static u64 ft_to_u64(const FILETIME *ft)
@@ -842,7 +842,7 @@ static unsigned __stdcall monitor_main(void *p)
 
     int n = m->n;
     int w = 1; for (int t = n; t >= 10; t /= 10) w++;
-    int frame = 0;                    /* rotierender Trenner | / - \ */
+    int frame = 0;                    /* rotating separator | / - \ */
 
     u64 *prev_cpu = (u64 *)calloc((size_t)n, sizeof(u64));
     if (!prev_cpu) return 0;
@@ -877,9 +877,9 @@ static unsigned __stdcall monitor_main(void *p)
             off += snprintf(line + off, sizeof line - off,
                             " %c RAM: %.1f MB", spin, (double)pmc.WorkingSetSize / 1048576.0);
 
-        /* Fortschritt / Extrapolation.
-         * Basis sind die in den Threads bearbeiteten Zahlen (prog_done/prog_span),
-         * nicht die Anzahl der ausgegebenen Primzahlen. */
+        /* Progress / extrapolation.
+         * Based on the numbers processed in the threads (prog_done/prog_span),
+         * not on the number of emitted primes. */
         u64 done = 0, span = 0;
         for (int i = 0; i < n; i++) {
             if (m->streams && m->streams[i]) {
@@ -896,12 +896,12 @@ static unsigned __stdcall monitor_main(void *p)
 
             if (frac > 0.0 && pct >= m->next_pct) {
                 double raw = elapsed / frac;
-                /* Geglaettete Schaetzung (EMA) */
+                /* Smoothed estimate (EMA) */
                 double expected = (m->last_expected > 0.0)
                                   ? (0.5 * raw + 0.5 * m->last_expected) : raw;
                 int col;
                 if (m->last_expected <= 0.0) {
-                    col = COL_WHITE;                 /* erste Extrapolation */
+                    col = COL_WHITE;                 /* first extrapolation */
                 } else {
                     double dev = fabs(expected - m->last_expected) / m->last_expected;
                     if (dev <= 0.05)        col = COL_WHITE;
@@ -914,8 +914,8 @@ static unsigned __stdcall monitor_main(void *p)
                 while (m->next_pct <= pct) m->next_pct += 5.0;
             }
 
-            /* Kontinuierliche Aufwaertskorrektur: Die reale Zeit darf die
-             * (extrapolierte) Gesamtdauer nie ueberholen. */
+            /* Continuous upward correction: the real time must never overtake
+             * the (extrapolated) total duration. */
             if (m->last_expected > 0.0 && frac > 0.0 && elapsed > m->last_expected) {
                 double need = elapsed / frac;
                 double smoothed = 0.5 * need + 0.5 * m->last_expected;
@@ -925,9 +925,9 @@ static unsigned __stdcall monitor_main(void *p)
             }
         }
 
-        /* Extrapolation immer anzeigen; vor der ersten Extrapolation
-         * werden alle Zahlenpositionen durch '-' ersetzt. Die Einheit richtet
-         * sich nach der Größenordnung (sek/min/std). */
+        /* Always show the extrapolation; before the first extrapolation all
+         * number positions are replaced by '-'. The unit follows the
+         * magnitude (sec/min/h). */
         if (off < (int)sizeof line - 96) {
             char ps[24], es[24], ts[24];
             const char *pstr, *estr, *tstr, *eunit, *tunit;
@@ -940,16 +940,16 @@ static unsigned __stdcall monitor_main(void *p)
                 tunit = time_unit(m->last_expected / 1000.0);
             } else {
                 pstr = "--%"; estr = "--:--:--"; tstr = "--:--:--";
-                eunit = "sek"; tunit = "sek";
+                eunit = "sec"; tunit = "sec";
             }
             off += snprintf(line + off, sizeof line - off,
-                            " | %s / %s %s von \x1b[38;5;%dm%s %s\x1b[0m",
+                            " | %s / %s %s of \x1b[38;5;%dm%s %s\x1b[0m",
                             pstr, estr, eunit, m->last_color, tstr, tunit);
         }
 
         if (off > (int)sizeof line - 1) off = (int)sizeof line - 1;
         EnterCriticalSection(&g_status_cs);
-        out_flush(0);                 /* gepufferte Primzahlen ausgeben */
+        out_flush(0);                 /* output buffered primes */
         memcpy(g_status_line, line, (size_t)off);
         g_status_line[off] = '\0';
         g_status_len = off;
@@ -1021,7 +1021,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
     g_status_coord = 0;
 
     if (threads <= 1 || low > high) {
-        u8 color = COL_WHITE;                     /* einzelner Thread: weiss */
+        u8 color = COL_WHITE;                     /* single thread: white */
         HANDLE one = NULL, handles[1];
         int n = 0;
         if (live) {
@@ -1033,8 +1033,8 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
         MonitorHandle mh;
         monitor_start(&mh, handles, &color, streams1, n, live);
 
-        /* Statuszeile nur schonen, wenn parallel auf dieselbe Konsole
-         * (stdout) geschrieben wird. Dann die unterste Zeile reservieren. */
+        /* Preserve the status line only when writing concurrently to the same
+         * console (stdout). Then reserve the bottom line. */
         g_status_coord = mh.mon.enabled && out->print && handle_is_console(STD_OUTPUT_HANDLE);
 
         out->buffered = 0;
@@ -1057,7 +1057,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
 
     ThreadArg *args = (ThreadArg *)calloc((size_t)threads, sizeof(ThreadArg));
     uintptr_t *hs   = (uintptr_t *)calloc((size_t)threads, sizeof(uintptr_t));
-    if (!args || !hs) { fprintf(stderr, "Fehler: Nicht genug Speicher.\n"); exit(1); }
+    if (!args || !hs) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
     int nargs = 0;
 
     for (int t = 0; t < threads; t++) {
@@ -1074,7 +1074,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
         a->ctx.last_ms    = qpc_ms();
 
         hs[nargs] = _beginthreadex(NULL, 0, thread_main, a, 0, NULL);
-        if (!hs[nargs]) { fprintf(stderr, "Fehler: Thread konnte nicht erstellt werden.\n"); exit(1); }
+        if (!hs[nargs]) { fprintf(stderr, "Error: could not create thread.\n"); exit(1); }
         nargs++;
     }
 
@@ -1123,7 +1123,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
 }
 
 /* ==================================================================
- *  Obergrenze fuer die n-te Primzahl: n*(ln n + ln ln n)
+ *  Upper bound for the n-th prime: n*(ln n + ln ln n)
  * ================================================================== */
 static u64 nth_prime_upper(u64 n)
 {
@@ -1138,45 +1138,45 @@ static u64 nth_prime_upper(u64 n)
 }
 
 /* ==================================================================
- *  Argumente
+ *  Arguments
  * ================================================================== */
 static void print_help(FILE *out)
 {
     fprintf(out,
-        "primes " PRIMES_VERSION " - Primzahlen berechnen (Windows x64)\n"
+        "GPrimes64 " PRIMES_VERSION " - slim prime generator (Win x64)\n"
         "\n"
-        "Verwendung:\n"
-        "  primes <N>                 Alle Primzahlen bis einschliesslich N\n"
-        "  primes -c <N>              Die ersten N Primzahlen\n"
-        "  primes -r <A> <B>          Alle Primzahlen im Bereich A bis B\n"
+        "Usage:\n"
+        "  gprimes64 <N>                 All primes up to and including N\n"
+        "  gprimes64 -c <N>              The first N primes\n"
+        "  gprimes64 -r <A> <B>          All primes in the range A to B\n"
         "\n"
-        "Optionen:\n"
-        "  -l, --limit <N>            Wie 'primes <N>'\n"
-        "  -c, --count <N>            Die ersten N Primzahlen\n"
-        "  -r, --range <A> <B>        Primzahlen im Bereich A..B\n"
-        "  -m, --method <name>        Berechnungsverfahren (Standard: sieve)\n"
-        "  -t, --time                 ASCII-Tabelle: Primzahl | Berechnungszeit\n"
-        "  -j, --threads <N>          N Threads verwenden (1 = aus, Standard)\n"
-        "      --mt                   So viele Threads wie CPU-Kerne (-j 0)\n"
-        "      --list-methods         Verfuegbare Verfahren anzeigen\n"
-        "  -q, --quiet                Nur die Zusammenfassung ausgeben\n"
-        "  -h, --help                 Diese Hilfe anzeigen\n"
-        "  -v, --version              Version anzeigen\n"
+        "Options:\n"
+        "  -l, --limit <N>               Same as 'gprimes64 <N>'\n"
+        "  -c, --count <N>               The first N primes\n"
+        "  -r, --range <A> <B>           Primes in the range A..B\n"
+        "  -m, --method <name>           Computation method (default: sieve)\n"
+        "  -t, --time                    ASCII table: prime | compute time\n"
+        "  -j, --threads <N>             Use N threads (1 = off, default)\n"
+        "      --mt                      As many threads as CPU cores (-j 0)\n"
+        "      --list-methods            List available methods\n"
+        "  -q, --quiet                   Output only the summary\n"
+        "  -h, --help                    Show this help\n"
+        "  -v, --version                 Show version\n"
         "\n"
-        "Es wird stets eine Zusammenfassung ausgegeben. In allen Modi ausser -q\n"
-        "erscheint auf stderr eine Live-Zeile: CPU-Last je Thread (farbcodiert),\n"
-        "RAM sowie ab ca. 10%% Fortschritt Prozent / verstrichene Zeit /\n"
-        "extrapolierte Gesamtdauer (rot = laenger, gruen = kuerzer als zuvor).\n"
+        "A summary is always printed. In all modes except -q a live line is\n"
+        "shown on stderr: CPU load per thread (color-coded), RAM, and from\n"
+        "about 10%% progress: percent / elapsed time / extrapolated total\n"
+        "duration (red = longer, green = shorter than before).\n"
         "\n"
-        "Zahlenbereich: 0 bis 18446744073709551615 (2^64-1).\n"
-        "Fuer sehr grosse Zahlen oder kleine Bereiche nahe grosser Werte sind\n"
-        "-m miller oder -m trial deutlich besser geeignet als das Sieb (das Sieb\n"
-        "baut dafuer Basisprimzahlen bis sqrt(N) auf und braucht viel Speicher).\n"
+        "Number range: 0 to 18446744073709551615 (2^64-1).\n"
+        "For very large numbers or small ranges near large values, -m miller\n"
+        "or -m trial are much better suited than the sieve (the sieve builds\n"
+        "base primes up to sqrt(N) and needs a lot of memory).\n"
         "\n"
-        "Beispiele:\n"
-        "  primes -t 100\n"
-        "  primes -m atkin -q 100000000\n"
-        "  primes -m sieve -j 8 -q 1000000000\n");
+        "Examples:\n"
+        "  gprimes64 -t 100\n"
+        "  gprimes64 -m atkin -q 100000000\n"
+        "  gprimes64 -m sieve -j 8 -q 1000000000\n");
 }
 
 typedef enum { P_OK, P_EMPTY, P_INVALID, P_RANGE } ParseStatus;
@@ -1184,7 +1184,7 @@ typedef enum { P_OK, P_EMPTY, P_INVALID, P_RANGE } ParseStatus;
 static ParseStatus parse_u64(const char *s, u64 *out)
 {
     if (!s || !*s) return P_EMPTY;
-    if (s[0] == '-') return P_INVALID;            /* keine negativen Zahlen */
+    if (s[0] == '-') return P_INVALID;            /* no negative numbers */
     errno = 0;
     char *end = NULL;
     unsigned long long v = strtoull(s, &end, 10);
@@ -1202,27 +1202,26 @@ static int parse_int(const char *s, int *out)
     return 1;
 }
 
-/* Klare Meldung fuer Zahlenargumente (unterscheidet Ueberlauf von ungueltig). */
+/* Clear message for numeric arguments (distinguishes overflow from invalid). */
 static void report_number_error(const char *what, const char *val, ParseStatus st)
 {
     if (st == P_RANGE)
         fprintf(stderr,
-            "Fehler: %s %s ist zu gross (max. 18446744073709551615 = 2^64-1).\n"
-            "        Fuer sehr grosse Zahlen Einzelprimalitaetstests nutzen: -m miller.\n",
+            "Error: %s %s is too large (max. 18446744073709551615 = 2^64-1).\n"
+            "       For very large numbers use single-number primality tests: -m miller.\n",
             what, val);
     else
-        fprintf(stderr, "Fehler: Ungueltige Zahl fuer %s: %s\n", what, val);
+        fprintf(stderr, "Error: invalid number for %s: %s\n", what, val);
 }
 
-/* Machbarkeitspruefung fuer das Sieb-Verfahren: Der Basisprimzahl-Aufbau bis
- * sqrt(high) benoetigt viel Speicher (Bitset + Primzahl-Array je Thread). Ist
- * der geschaetzte Bedarf groesser als der verfuegbare RAM, wird mit klarer
- * Meldung abgebrochen. */
+/* Feasibility check for the sieve method: building the base primes up to
+ * sqrt(high) needs a lot of memory (bitset + prime array per thread). If the
+ * estimated requirement exceeds the available RAM, abort with a clear message. */
 static void check_sieve_feasible(u64 high, int threads)
 {
     if (high < 3) return;
     double sr = sqrt((double)high);
-    double per = sr / 16.0 + (sr / log(sr)) * 8.0;   /* Bitset + Primzahl-Array */
+    double per = sr / 16.0 + (sr / log(sr)) * 8.0;   /* bitset + prime array */
     if (threads < 1) threads = 1;
     double total = per * (double)threads;
 
@@ -1234,10 +1233,10 @@ static void check_sieve_feasible(u64 high, int threads)
 
     if (total > avail * 0.75) {
         fprintf(stderr,
-            "Fehler: Obergrenze %llu ist fuer das Sieb-Verfahren zu gross.\n"
-            "        Geschaetzter Basisprimzahl-Speicher ~%.2f GB pro Thread x %d = ~%.2f GB,\n"
-            "        verfuegbar sind nur ~%.2f GB.\n"
-            "        Bitte -m miller oder -m trial verwenden (oder -j reduzieren).\n",
+            "Error: upper bound %llu is too large for the sieve method.\n"
+            "       Estimated base-prime memory ~%.2f GB per thread x %d = ~%.2f GB,\n"
+            "       but only ~%.2f GB are available.\n"
+            "       Please use -m miller or -m trial (or reduce -j).\n",
             (unsigned long long)high, per / 1073741824.0, threads,
             total / 1073741824.0, avail / 1073741824.0);
         exit(1);
@@ -1260,7 +1259,7 @@ int main(int argc, char **argv)
 
     InitializeCriticalSection(&g_status_cs);
 
-    /* ANSI-Farben auf Windows-Konsolen aktivieren */
+    /* Enable ANSI colors on Windows consoles */
     DWORD cm;
     if (GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &cm))
         SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), cm | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
@@ -1278,47 +1277,47 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) { print_help(stdout); return 0; }
-        if (!strcmp(a, "-v") || !strcmp(a, "--version")) { printf("primes %s\n", PRIMES_VERSION); return 0; }
+        if (!strcmp(a, "-v") || !strcmp(a, "--version")) { printf("GPrimes64 %s\n", PRIMES_VERSION); return 0; }
         if (!strcmp(a, "--list-methods")) { list_methods(stdout); return 0; }
         if (!strcmp(a, "-q") || !strcmp(a, "--quiet")) { quiet = 1; continue; }
         if (!strcmp(a, "-t") || !strcmp(a, "--time")) { table = 1; continue; }
         if (!strcmp(a, "--mt")) { threads_opt = 0; continue; }
         if (!strcmp(a, "-m") || !strcmp(a, "--method")) {
-            if (++i >= argc) { fprintf(stderr, "Fehler: -m/--method erwartet einen Namen.\n"); return 1; }
+            if (++i >= argc) { fprintf(stderr, "Error: -m/--method expects a name.\n"); return 1; }
             method_name = argv[i]; continue;
         }
         if (!strcmp(a, "-j") || !strcmp(a, "--threads")) {
             if (++i >= argc || !parse_int(argv[i], &threads_opt) || threads_opt < 0) {
-                fprintf(stderr, "Fehler: -j/--threads erwartet eine Zahl >= 0.\n"); return 1;
+                fprintf(stderr, "Error: -j/--threads expects a number >= 0.\n"); return 1;
             }
             continue;
         }
         if (!strcmp(a, "-l") || !strcmp(a, "--limit")) {
-            if (++i >= argc) { fprintf(stderr, "Fehler: -l/--limit erwartet eine Zahl.\n"); return 1; }
+            if (++i >= argc) { fprintf(stderr, "Error: -l/--limit expects a number.\n"); return 1; }
             ParseStatus st = parse_u64(argv[i], &limit);
-            if (st != P_OK) { report_number_error("Obergrenze (-l)", argv[i], st); return 1; }
+            if (st != P_OK) { report_number_error("limit (-l)", argv[i], st); return 1; }
             mode = MODE_LIMIT; have_action = 1; continue;
         }
         if (!strcmp(a, "-c") || !strcmp(a, "--count")) {
-            if (++i >= argc) { fprintf(stderr, "Fehler: -c/--count erwartet eine Zahl.\n"); return 1; }
+            if (++i >= argc) { fprintf(stderr, "Error: -c/--count expects a number.\n"); return 1; }
             ParseStatus st = parse_u64(argv[i], &nfirst);
-            if (st != P_OK) { report_number_error("Anzahl (-c)", argv[i], st); return 1; }
+            if (st != P_OK) { report_number_error("count (-c)", argv[i], st); return 1; }
             mode = MODE_FIRST; have_action = 1; continue;
         }
         if (!strcmp(a, "-r") || !strcmp(a, "--range")) {
-            if (i + 2 >= argc) { fprintf(stderr, "Fehler: -r/--range erwartet zwei Zahlen A B.\n"); return 1; }
+            if (i + 2 >= argc) { fprintf(stderr, "Error: -r/--range expects two numbers A B.\n"); return 1; }
             ParseStatus sa = parse_u64(argv[i + 1], &rangelow);
-            if (sa != P_OK) { report_number_error("Grenze A (-r)", argv[i + 1], sa); return 1; }
+            if (sa != P_OK) { report_number_error("range bound A (-r)", argv[i + 1], sa); return 1; }
             ParseStatus sb = parse_u64(argv[i + 2], &rangehigh);
-            if (sb != P_OK) { report_number_error("Grenze B (-r)", argv[i + 2], sb); return 1; }
+            if (sb != P_OK) { report_number_error("range bound B (-r)", argv[i + 2], sb); return 1; }
             i += 2; mode = MODE_RANGE; have_action = 1; continue;
         }
         if (a[0] == '-' && a[1] != '\0') {
-            fprintf(stderr, "Unbekannte Option: %s\n", a); print_help(stderr); return 1;
+            fprintf(stderr, "Unknown option: %s\n", a); print_help(stderr); return 1;
         }
         {
             ParseStatus st = parse_u64(a, &limit);
-            if (st != P_OK) { report_number_error("Obergrenze", a, st); return 1; }
+            if (st != P_OK) { report_number_error("limit", a, st); return 1; }
         }
         mode = MODE_LIMIT; have_action = 1;
     }
@@ -1326,15 +1325,15 @@ int main(int argc, char **argv)
     if (!have_action) { print_help(stderr); return 1; }
     if (table && quiet) {
         fprintf(stderr,
-            "Fehler: -q/--quiet und -t/--time koennen nicht kombiniert werden, "
-            "weil -q ausschliesslich die Zusammenfassung ausgibt.\n");
+            "Error: -q/--quiet and -t/--time cannot be combined because "
+            "-q outputs only the summary.\n");
         return 1;
     }
 
     int method_ok = 0;
     MethodFn mf = resolve_method(method_name, &method_ok);
     if (!method_ok) {
-        fprintf(stderr, "Unbekanntes Verfahren: %s\n\n", method_name);
+        fprintf(stderr, "Unknown method: %s\n\n", method_name);
         list_methods(stderr);
         return 1;
     }
@@ -1361,18 +1360,18 @@ int main(int argc, char **argv)
     out.cur_color  = COL_WHITE;
     out.last_ms    = qpc_ms();
 
-    int live = !quiet;                 /* Live-Zeile in allen Modi ausser -q */
+    int live = !quiet;                 /* live line in all modes except -q */
 
     double t0 = qpc_ms();
     run_method(mf, low, high, threads, &out, live);
     double t1 = qpc_ms();
 
     if (quiet) {
-        /* -q: ausschliesslich die Zusammenfassung (auf stdout). */
-        printf("Anzahl: %llu, Zeit: %.3f s, Verfahren: %s, Threads: %d\n",
+        /* -q: only the summary (on stdout). */
+        printf("Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
                (unsigned long long)out.found, (t1 - t0) / 1000.0, method_name, threads);
     } else {
-        fprintf(stderr, "Anzahl: %llu, Zeit: %.3f s, Verfahren: %s, Threads: %d\n",
+        fprintf(stderr, "Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
                 (unsigned long long)out.found, (t1 - t0) / 1000.0, method_name, threads);
     }
 
