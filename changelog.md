@@ -16,6 +16,30 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [3.2.0] - 2026-10-06
+
+### Added
+- **Multithreading in 128-bit mode.** `-j`/`--mt` now works for values beyond
+  64-bit as well: the range is split into contiguous chunks, each thread runs
+  Miller-Rabin, and the results are merged in ascending order (deterministic,
+  identical to single-threaded).
+
+### Fixed
+- Corrected the number ranges in error messages:
+  - the "number too large" message now states the correct maximum
+    `340282366920938463463374607431768211455 = 2^128-1` (previously 2^64-1);
+  - the "count beyond 64-bit" message no longer gives a wrong reason.
+- The console window title now shows the range in use between the app name and
+  the CPU value: `gprimes64.exe @64Bit - CPU NN%` or
+  `gprimes64.exe @128Bit - CPU NN%`.
+
+### Verification
+- 128-bit multithreading: `-j 1/2/4/auto` produce identical counts, ascending
+  output is preserved, and an independent check (Python) matches. Example:
+  ~3.8x faster with 4 threads.
+
+---
+
 ## [3.1.0] - 2026-10-06
 
 ### Added

@@ -9,7 +9,7 @@
  *   atkin     Sieve of Atkin
  *   sundaram  Sieve of Sundaram
  *   trial     Trial division (6k +/- 1)
- *   miller    Miller-Rabin (deterministic for 64-bit)
+ *   miller    Miller-Rabin (deterministic <=64-bit, probabilistic beyond)
  *
  * Output:
  *   -t/--time       ASCII table: prime | compute time (ms)
@@ -52,7 +52,7 @@
 typedef uint64_t u64;
 typedef uint8_t  u8;
 
-#define PRIMES_VERSION "3.1.0"
+#define PRIMES_VERSION "3.2.0"
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
@@ -767,7 +767,7 @@ static const MethodDef METHODS[] = {
     { "atkin",    NULL,           method_atkin,        "Sieve of Atkin" },
     { "sundaram", NULL,           method_sundaram,     "Sieve of Sundaram" },
     { "trial",    "probe",        method_trial,        "Trial division (6k +/- 1)" },
-    { "miller",   "millerrabin",  method_miller,       "Miller-Rabin (deterministic, 64-bit)" },
+    { "miller",   "millerrabin",  method_miller,       "Miller-Rabin (deterministic <=64-bit, probabilistic beyond)" },
 };
 static const size_t NMETHODS = sizeof(METHODS) / sizeof(METHODS[0]);
 
@@ -803,6 +803,7 @@ typedef struct {
     int            n;
     int            enabled;
     int            draw;            /* draw the status line                 */
+    int            wide;            /* 1 = 128-bit range, 0 = 64-bit range   */
     int            have_title;      /* console title was saved              */
     char           orig_title[512];
     double         start_ms;
@@ -958,7 +959,8 @@ static unsigned __stdcall monitor_main(void *p)
         if (m->have_title && (tick % 10 == 0)) {
             double avg = n > 0 ? pct_sum / (double)n : 0.0;
             char tbuf[128];
-            snprintf(tbuf, sizeof tbuf, "gprimes64.exe - CPU %.0f%%", avg);
+            snprintf(tbuf, sizeof tbuf, "gprimes64.exe @%sBit - CPU %.0f%%",
+                     m->wide ? "128" : "64", avg);
             SetConsoleTitleA(tbuf);
         }
 
@@ -982,7 +984,7 @@ static unsigned __stdcall monitor_main(void *p)
 typedef struct { Monitor mon; HANDLE thread; } MonitorHandle;
 
 static void monitor_start(MonitorHandle *mh, HANDLE *handles, const u8 *colors,
-                          StreamCtx **streams, int n, int live, int title)
+                          StreamCtx **streams, int n, int live, int title, int wide)
 {
     memset(&mh->mon, 0, sizeof mh->mon);
     mh->thread = NULL;
@@ -990,6 +992,7 @@ static void monitor_start(MonitorHandle *mh, HANDLE *handles, const u8 *colors,
     mh->mon.colors  = colors;
     mh->mon.streams = streams;
     mh->mon.n = n;
+    mh->mon.wide = wide;
     mh->mon.start_ms = qpc_ms();
     mh->mon.last_color = COL_WHITE;
     mh->mon.next_pct = 10.0;
@@ -1057,7 +1060,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
         StreamCtx *streams1[1];
         streams1[0] = out;
         MonitorHandle mh;
-        monitor_start(&mh, handles, &color, streams1, n, live, 1);
+        monitor_start(&mh, handles, &color, streams1, n, live, 1, 0);
 
         /* Preserve the status line only when writing concurrently to the same
          * console (stdout). Then reserve the bottom line. */
@@ -1113,7 +1116,7 @@ static void run_method(MethodFn fn, u64 low, u64 high, int threads,
     HANDLE *hhandles = (HANDLE *)calloc((size_t)(nargs ? nargs : 1), sizeof(HANDLE));
     for (int t = 0; t < nargs; t++) hhandles[t] = (HANDLE)hs[t];
     MonitorHandle mh;
-    monitor_start(&mh, hhandles, colors, streams, nargs, live, 1);
+    monitor_start(&mh, hhandles, colors, streams, nargs, live, 1, 0);
 
     for (int t = 0; t < nargs; t++)
         WaitForSingleObject((HANDLE)hs[t], INFINITE);
@@ -1235,7 +1238,7 @@ static void report_number_error(const char *what, const char *val, ParseStatus s
 {
     if (st == P_RANGE)
         fprintf(stderr,
-            "Error: %s %s is too large (max. 18446744073709551615 = 2^64-1).\n"
+            "Error: %s %s is too large (max. 340282366920938463463374607431768211455 = 2^128-1).\n"
             "       For very large numbers use single-number primality tests: -m miller.\n",
             what, val);
     else
@@ -1296,6 +1299,11 @@ static void u128_add_u64(u128 *a, u64 d) {
 }
 static u128 u128_shr1(u128 a) {
     u128 r; r.lo = (a.lo >> 1) | (a.hi << 63); r.hi = a.hi >> 1; return r;
+}
+static u128 u128_mul_u64(u128 a, u64 m) {
+    u64 hi; u64 lo = _umul128(a.lo, m, &hi);
+    u128 r; r.lo = lo; r.hi = a.hi * m + hi;
+    return r;
 }
 static u64 u128_bit(u128 a, int i) {
     return (i >= 64) ? ((a.hi >> (i - 64)) & 1) : ((a.lo >> i) & 1);
@@ -1412,8 +1420,10 @@ typedef struct {
     int    print;
     int    table;
     int    measure;
+    int    buffered;     /* buffer primes (for the MT merge) */
     u64    stop_at;
     u64    found;
+    u8     cur_color;
     u128  *bp;
     double *bt;
     u8    *bc;
@@ -1432,7 +1442,7 @@ static void buf_push128(Ctx128 *c, u128 p, double ms) {
     }
     c->bp[c->len] = p;
     if (c->measure) c->bt[c->len] = ms;
-    if (c->table)   c->bc[c->len] = COL_WHITE;
+    if (c->table)   c->bc[c->len] = c->cur_color;
     c->len++;
 }
 
@@ -1477,8 +1487,9 @@ static void method128_miller(u128 low, u128 high, Ctx128 *c) {
     c->prog.prog_span = span;
     c->prog.prog_done = 0;
 
+    int collect = c->table || c->buffered;
     if (u128_cmp(low, u128_from_u64(2)) <= 0 && u128_cmp(high, u128_from_u64(2)) >= 0) {
-        if (c->table) buf_push128(c, u128_from_u64(2), 0.0);
+        if (collect) buf_push128(c, u128_from_u64(2), 0.0);
         else if (c->print) print_u128(u128_from_u64(2));
         c->found++;
         if (c->stop_at && c->found >= c->stop_at) { c->prog.prog_done = span; return; }
@@ -1493,7 +1504,7 @@ static void method128_miller(u128 low, u128 high, Ctx128 *c) {
         int prime = is_prime128_mr(n);
         if (prime) {
             double dt = c->measure ? (qpc_ms() - t0) : 0.0;
-            if (c->table) buf_push128(c, n, dt);
+            if (collect) buf_push128(c, n, dt);
             else if (c->print) print_u128(n);
             c->found++;
             if (c->stop_at && c->found >= c->stop_at) { c->prog.prog_done = span; return; }
@@ -1506,27 +1517,106 @@ static void method128_miller(u128 low, u128 high, Ctx128 *c) {
     c->prog.prog_done = span;
 }
 
-static void run128(u128 low, u128 high, Ctx128 *out, int live) {
-    HANDLE one = NULL, handles[1];
-    int n = 0;
-    if (live) {
-        one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
-        if (one) { handles[0] = one; n = 1; }
+typedef struct { u128 low, high; Ctx128 ctx; } ThreadArg128;
+
+static unsigned __stdcall thread128_main(void *p) {
+    ThreadArg128 *a = (ThreadArg128 *)p;
+    a->ctx.buffered = 1;
+    a->ctx.print = 0;
+    a->ctx.table = 0;
+    method128_miller(a->low, a->high, &a->ctx);
+    return 0;
+}
+
+static void run128(u128 low, u128 high, int threads, Ctx128 *out, int live) {
+    if (threads <= 1 || u128_cmp(low, high) >= 0) {
+        HANDLE one = NULL, handles[1];
+        int n = 0;
+        if (live) {
+            one = OpenThread(THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+            if (one) { handles[0] = one; n = 1; }
+        }
+        u8 color = COL_WHITE;
+        StreamCtx *streams1[1];
+        streams1[0] = &out->prog;
+        MonitorHandle mh;
+        monitor_start(&mh, handles, &color, streams1, n, live, 1, 1);
+        g_status_coord = mh.mon.draw && out->print && handle_is_console(STD_OUTPUT_HANDLE);
+        out->prog.prog_span = 0;
+        out->prog.prog_done = 0;
+        method128_miller(low, high, out);
+        g_status_coord = 0;
+        monitor_stop(&mh);
+        status_finish();
+        if (one) CloseHandle(one);
+        if (out->table) print_table128(out);
+        return;
     }
-    u8 color = COL_WHITE;
-    StreamCtx *streams1[1];
-    streams1[0] = &out->prog;
+
+    /* Split [low, high] into contiguous chunks by value. */
+    u128 width = u128_sub(high, low);
+    u128 chunk = width;
+    u64 rem = u128_divmod_small(&chunk, (u64)threads);
+    if (rem != 0) u128_add_u64(&chunk, 1);
+    if (u128_is_zero(chunk)) chunk = u128_from_u64(1);
+
+    ThreadArg128 *args = (ThreadArg128 *)calloc((size_t)threads, sizeof(ThreadArg128));
+    uintptr_t *hs = (uintptr_t *)calloc((size_t)threads, sizeof(uintptr_t));
+    if (!args || !hs) { fprintf(stderr, "Error: out of memory.\n"); exit(1); }
+    int nargs = 0;
+    for (int t = 0; t < threads; t++) {
+        u128 lo = u128_add(low, u128_mul_u64(chunk, (u64)t));
+        if (u128_cmp(lo, high) > 0) break;
+        u128 hi = u128_sub(u128_add(lo, chunk), u128_from_u64(1));
+        if (u128_cmp(hi, high) > 0) hi = high;
+        ThreadArg128 *a = &args[nargs];
+        a->low = lo; a->high = hi;
+        memset(&a->ctx, 0, sizeof(Ctx128));
+        a->ctx.measure = out->measure;
+        hs[nargs] = _beginthreadex(NULL, 0, thread128_main, a, 0, NULL);
+        if (!hs[nargs]) { fprintf(stderr, "Error: could not create thread.\n"); exit(1); }
+        nargs++;
+    }
+
+    u8 *colors = (u8 *)malloc((size_t)(nargs ? nargs : 1) * sizeof(u8));
+    assign_thread_colors(nargs, colors);
+    StreamCtx **streams = (StreamCtx **)malloc((size_t)(nargs ? nargs : 1) * sizeof(StreamCtx *));
+    for (int t = 0; t < nargs; t++) streams[t] = &args[t].ctx.prog;
+    HANDLE *hhandles = (HANDLE *)calloc((size_t)(nargs ? nargs : 1), sizeof(HANDLE));
+    for (int t = 0; t < nargs; t++) hhandles[t] = (HANDLE)hs[t];
+
     MonitorHandle mh;
-    monitor_start(&mh, handles, &color, streams1, n, live, 1);
-    g_status_coord = mh.mon.draw && out->print && handle_is_console(STD_OUTPUT_HANDLE);
-    out->prog.prog_span = 0;
-    out->prog.prog_done = 0;
-    method128_miller(low, high, out);
-    g_status_coord = 0;
+    monitor_start(&mh, hhandles, colors, streams, nargs, live, 1, 1);
+
+    for (int t = 0; t < nargs; t++) WaitForSingleObject((HANDLE)hs[t], INFINITE);
     monitor_stop(&mh);
     status_finish();
-    if (one) CloseHandle(one);
+
+    if (!out->print && !out->table) {
+        u64 sum = 0;
+        for (int t = 0; t < nargs; t++) sum += args[t].ctx.found;
+        out->found = sum;
+        if (out->stop_at && out->found > out->stop_at) out->found = out->stop_at;
+    } else {
+        int done = 0;
+        for (int t = 0; t < nargs && !done; t++) {
+            Ctx128 *w = &args[t].ctx;
+            out->cur_color = colors[t];
+            for (size_t i = 0; i < w->len; i++) {
+                if (out->table) buf_push128(out, w->bp[i], w->measure ? w->bt[i] : 0.0);
+                else if (out->print) print_u128(w->bp[i]);
+                out->found++;
+                if (out->stop_at && out->found >= out->stop_at) { done = 1; break; }
+            }
+        }
+    }
     if (out->table) print_table128(out);
+
+    for (int t = 0; t < nargs; t++) {
+        CloseHandle((HANDLE)hs[t]);
+        free(args[t].ctx.bp); free(args[t].ctx.bt); free(args[t].ctx.bc);
+    }
+    free(args); free(hs); free(hhandles); free(colors); free(streams);
 }
 
 /* ==================================================================
@@ -1660,7 +1750,7 @@ int main(int argc, char **argv)
             if (u128_cmp(lo128, hi128) > 0) { u128 t = lo128; lo128 = hi128; hi128 = t; }
         } else {
             if (!cnt_fit) {
-                fprintf(stderr, "Error: count beyond 64-bit is not supported (the resulting primes would exceed the 128-bit range).\n");
+                fprintf(stderr, "Error: count beyond 64-bit is not supported (the requested number of primes must fit in 64-bit).\n");
                 return 1;
             }
             lo128 = u128_from_u64(0);
@@ -1676,15 +1766,15 @@ int main(int argc, char **argv)
         out128.stop_at = stop;
 
         double t0 = qpc_ms();
-        run128(lo128, hi128, &out128, !quiet);
+        run128(lo128, hi128, threads, &out128, !quiet);
         double t1 = qpc_ms();
 
         if (quiet)
             printf("Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
-                   (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, 1);
+                   (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, threads);
         else
             fprintf(stderr, "Count: %llu, Time: %.3f s, Method: %s, Threads: %d\n",
-                    (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, 1);
+                    (unsigned long long)out128.found, (t1 - t0) / 1000.0, method_name, threads);
 
         free(out128.bp); free(out128.bt); free(out128.bc);
         DeleteCriticalSection(&g_status_cs);

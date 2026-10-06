@@ -86,6 +86,7 @@ Count: 78498, Time: 0.001 s, Method: sieve, Threads: 1
   there only `-m miller` (probabilistic) is available. The sieve methods
   (`sieve`, `atkin`, `sundaram`) and `trial` are rejected with a one-sentence
   error: `method 'X' is not available for numbers beyond 64-bit; use -m miller`.
+  Multithreading (`-j`/`--mt`) works in 128-bit mode as well.
 - **Sieve vs. large numbers:** the `sieve` method builds base primes up to
   `sqrt(N)`. For large `high` (near 2^64) the memory requirement grows strongly
   (bitset + prime array per thread). Before starting, the estimated requirement
@@ -122,7 +123,8 @@ fixed positions.
 
 During a computation the **console window title** additionally shows the
 average CPU load over all threads, updated once per second:
-`gprimes64.exe - CPU 73%`. The original title is restored afterwards.
+`gprimes64.exe @128Bit - CPU 73%`. The `@64Bit`/`@128Bit` tag indicates the
+range in use. The original title is restored afterwards.
 
 ### Extrapolation
 
@@ -175,7 +177,8 @@ gprimes64 -m sieve --mt   -q 1000000000   REM all CPU cores
 
 The range is split into contiguous blocks, each thread computes one block, and
 the output is emitted **in ascending order** - deterministic and identical to
-the single-threaded output.
+the single-threaded output. This applies to both the 64-bit and the 128-bit
+range.
 
 Example scaling (sieve up to 10^9, 50847534 primes):
 
