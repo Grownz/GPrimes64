@@ -16,6 +16,20 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [3.2.1] - 2026-10-06
+
+### Fixed
+- **The `-t` table in 128-bit mode is now color-coded by thread as well.** The
+  vertical bars are drawn in the color of the thread that computed each value,
+  matching the 64-bit mode (single thread = white; plain ASCII when not a
+  console).
+
+### Verification
+- 128-bit `-t -j 4` uses the same distinct thread colors as the 64-bit mode;
+  redirected output stays plain ASCII.
+
+---
+
 ## [3.2.0] - 2026-10-06
 
 ### Added

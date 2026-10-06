@@ -52,7 +52,7 @@
 typedef uint64_t u64;
 typedef uint8_t  u8;
 
-#define PRIMES_VERSION "3.2.0"
+#define PRIMES_VERSION "3.2.1"
 
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
@@ -1475,7 +1475,13 @@ static void print_table128(const Ctx128 *c) {
     for (size_t i = 0; i < c->len; i++) {
         u128_to_dec(c->bp[i], p, sizeof p);
         snprintf(b, sizeof b, "%.3f ms", c->bt[i]);
-        printf("| %*s | %*s |\n", w1, p, w2, b);
+        if (g_table_color) {
+            int col = c->bc[i];
+            printf("\x1b[38;5;%dm|\x1b[0m %*s \x1b[38;5;%dm|\x1b[0m %*s \x1b[38;5;%dm|\x1b[0m\n",
+                   col, w1, p, col, w2, b, col);
+        } else {
+            printf("| %*s | %*s |\n", w1, p, w2, b);
+        }
     }
     print_rule(w1, w2);
     fflush(stdout);
@@ -1764,6 +1770,7 @@ int main(int argc, char **argv)
         out128.table   = table;
         out128.measure = table;
         out128.stop_at = stop;
+        out128.cur_color = COL_WHITE;
 
         double t0 = qpc_ms();
         run128(lo128, hi128, threads, &out128, !quiet);
